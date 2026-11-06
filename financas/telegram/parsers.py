@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
+import json
+import logging
+from pathlib import Path
 import re
 from typing import NamedTuple
 
@@ -19,6 +22,51 @@ from financas.domain.models import (
     normalizar_texto_chave,
     para_decimal,
 )
+
+logger = logging.getLogger(__name__)
+
+ARQUIVO_REGRAS_TELEGRAM = Path(__file__).resolve().parents[2] / "regras_telegram.json"
+ARQUIVO_REGRAS_TELEGRAM_EXAMPLE = Path(__file__).resolve().parents[2] / "regras_telegram.example.json"
+
+
+def carregar_regras_telegram(
+    caminho: Path | str | None = None,
+) -> tuple[tuple[tuple[str, str], ...], tuple[tuple[str, str], ...]]:
+    """Carrega as regras de mapeamento de contas e categorias do Telegram a partir do JSON.
+
+    Retorna `(regras_contas, regras_categorias)`, ambas ordenadas pelo tamanho decrescente do termo.
+    """
+    alvo = Path(caminho) if caminho else ARQUIVO_REGRAS_TELEGRAM
+    if not alvo.is_file() and not caminho and ARQUIVO_REGRAS_TELEGRAM_EXAMPLE.is_file():
+        alvo = ARQUIVO_REGRAS_TELEGRAM_EXAMPLE
+
+    contas: list[tuple[str, str]] = []
+    categorias: list[tuple[str, str]] = []
+
+    if alvo.is_file():
+        try:
+            conteudo = json.loads(alvo.read_text(encoding="utf-8"))
+            if isinstance(conteudo, dict):
+                m_contas = conteudo.get("contas", {})
+                if isinstance(m_contas, dict):
+                    contas = [
+                        (normalizar_texto_chave(k), str(v).strip())
+                        for k, v in m_contas.items()
+                        if k and v
+                    ]
+                m_cats = conteudo.get("categorias", {})
+                if isinstance(m_cats, dict):
+                    categorias = [
+                        (normalizar_texto_chave(k), str(v).strip())
+                        for k, v in m_cats.items()
+                        if k and v
+                    ]
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning("Falha ao ler regras do Telegram (%s): %s", alvo, exc)
+
+    contas.sort(key=lambda r: len(r[0]), reverse=True)
+    categorias.sort(key=lambda r: len(r[0]), reverse=True)
+    return tuple(contas), tuple(categorias)
 
 
 class GastoManualExtraido(NamedTuple):
@@ -40,83 +88,64 @@ class MensagemGastoParser:
         r"(?i)(?:R\$\s*)?(\d{1,6}(?:[,\.]\d{1,2})?)(?!\S)",
     )
 
-    # Aliases rápidos para mapear termos informais para os nomes exatos no Notion
-    _ALIASES_CONTAS: tuple[tuple[tuple[str, ...], str], ...] = (
-        (("santander conta", "santader conta", "debito santander", "pix santander"), "Santader Conta"),
-        (("inter conta", "debito inter", "pix inter"), "Inter Conta"),
-        (("bradesco conta", "debito bradesco", "pix bradesco"), "Bradesco Conta"),
-        (("santander", "santader", "santander credito", "santader credito"), "Santader Credito"),
-        (("inter", "inter credito"), "Inter Credito"),
-        (("bradesco", "bradesco credito"), "Bradesco Credito"),
-        (("amazon", "bradescard"), "Amazon bradescard"),
-        (("debito", "pix", "conta"), "Santader Conta"),
-    )
-
-    # Mapeamento para extração ou exigência de categoria obrigatória
-    _ALIASES_CATEGORIAS: tuple[tuple[tuple[str, ...], str], ...] = (
-        (("lanche", "lanches", "cafe", "café", "cafezinho", "padaria", "mcdonalds", "burger king", "snack"), "Lanche"),
-        (("alimentacao", "alimentação", "mercado", "supermercado", "hortifruti", "feira", "almoco", "almoço", "jantar", "restaurante"), "Alimentação"),
-        (("transporte privado", "transporte", "uber", "99", "taxi", "combustivel", "gasolina"), "Transporte Privado"),
-        (("transporte publico", "transporte público", "metro", "metrô", "onibus", "ônibus", "passagem"), "Transporte Público"),
-        (("saude", "saúde", "farmacia", "drogaria", "remedio", "remédio", "consulta", "medico"), "Saúde"),
-        (("plano de saude", "plano de saúde", "convenio"), "Plano de saúde"),
-        (("beleza", "salao", "salão", "cabeleireiro", "manicure", "corte", "estetica"), "Beleza"),
-        (("roupa", "roupas", "vestuario", "sapato", "tenis", "tênis", "calcado"), "Roupa"),
-        (("lazer", "cinema", "show", "passeio", "parque", "diversao", "diversão"), "Lazer"),
-        (("livro", "livros", "leitura", "kindle"), "Livro"),
-        (("cursos", "curso", "educacao", "educação", "faculdade"), "Cursos"),
-        (("casa", "moveis", "móveis", "decoracao", "decoração", "utensilio"), "Casa"),
-        (("utilidade", "utilidades", "ferramenta"), "Utilidade"),
-        (("academia", "gym", "treino", "suplemento"), "Academia"),
-        (("viagem", "hotel", "hospedagem", "voo"), "Viagem"),
-        (("eletronicos", "eletrônicos", "celular", "gadget"), "Eletronicos"),
-        (("streamings", "streaming", "netflix", "spotify", "hbo", "prime"), "Streamings"),
-        (("ajuda familiar", "ajuda mae", "ajuda mãe", "mesada"), "Ajuda Familiar"),
-    )
-
     def __init__(
         self,
         conta_padrao: str = "Santader Credito",
         classificador: ClassificadorCategoria | None = None,
         calculadora: CalculadoraFatura | None = None,
         cartoes: dict[str, CartaoConfig] | None = None,
+        regras_contas: tuple[tuple[str, str], ...] | None = None,
+        regras_categorias: tuple[tuple[str, str], ...] | None = None,
     ) -> None:
         self.conta_padrao = conta_padrao
         self._classificador = classificador or ClassificadorCategoria()
         self._calc = calculadora or CalculadoraFatura()
         self._cartoes = cartoes or {}
 
+        if regras_contas is None or regras_categorias is None:
+            c_padrao, cat_padrao = carregar_regras_telegram()
+            self._regras_contas = regras_contas if regras_contas is not None else c_padrao
+            self._regras_categorias = (
+                regras_categorias if regras_categorias is not None else cat_padrao
+            )
+        else:
+            self._regras_contas = tuple(
+                sorted(regras_contas, key=lambda r: len(r[0]), reverse=True)
+            )
+            self._regras_categorias = tuple(
+                sorted(regras_categorias, key=lambda r: len(r[0]), reverse=True)
+            )
+
     def _identificar_conta(self, texto: str) -> tuple[str, str]:
         """Identifica se uma conta/cartão foi mencionada no texto e a remove da descrição."""
         texto_norm = normalizar_texto_chave(texto)
-        for termos, nome_oficial in self._ALIASES_CONTAS:
-            for termo in sorted(termos, key=len, reverse=True):
-                padrao = rf"\b{re.escape(termo)}\b"
-                if re.search(padrao, texto_norm):
-                    texto_limpo = re.sub(padrao, "", texto, flags=re.IGNORECASE).strip()
-                    texto_limpo = re.sub(r"\s+", " ", texto_limpo).strip(" -:,")
-                    return nome_oficial, texto_limpo
+        for termo, nome_oficial in self._regras_contas:
+            padrao = rf"\b{re.escape(termo)}\b"
+            if re.search(padrao, texto_norm):
+                texto_limpo = re.sub(padrao, "", texto, flags=re.IGNORECASE).strip()
+                texto_limpo = re.sub(r"\s+", " ", texto_limpo).strip(" -:,")
+                return nome_oficial, texto_limpo
 
         return self.conta_padrao, texto.strip()
 
     def _identificar_categoria(self, texto: str) -> tuple[str | None, str]:
-        """Extrai a categoria mencionada explicitamente no texto ou infere via palavras-chave.
+        """Extrai a categoria mencionada explicitamente no texto ou infere via regras do JSON.
 
         Retorna `(categoria_oficial_ou_none, texto_sem_categoria)`.
         """
         texto_norm = normalizar_texto_chave(texto)
 
-        for termos, nome_cat in self._ALIASES_CATEGORIAS:
-            for termo in sorted(termos, key=len, reverse=True):
-                padrao = rf"\b{re.escape(termo)}\b"
-                if re.search(padrao, texto_norm):
-                    # Se o texto for exatamente a palavra da categoria (ex: "cafe" ou "uber"), mantém a descrição
-                    if normalizar_texto_chave(texto) == termo:
-                        return nome_cat, texto.strip()
-                    # Caso contrário, remove a categoria da descrição para deixá-la limpa
-                    texto_limpo = re.sub(padrao, "", texto, flags=re.IGNORECASE).strip()
-                    texto_limpo = re.sub(r"\s+", " ", texto_limpo).strip(" -:,")
-                    return nome_cat, texto_limpo or texto.strip()
+        for termo, nome_cat in self._regras_categorias:
+            termo_norm = normalizar_texto_chave(termo)
+            padrao = rf"\b{re.escape(termo_norm)}\b"
+            if re.search(padrao, texto_norm):
+                # Se o texto for exatamente a palavra da categoria (ex: "cafe" ou "uber"), mantém a descrição
+                if texto_norm == termo_norm:
+                    return nome_cat, texto.strip()
+                # Caso contrário, remove a categoria da descrição para deixá-la limpa
+                texto_limpo = re.sub(padrao, "", texto, flags=re.IGNORECASE).strip()
+                texto_limpo = re.sub(r"\s+", " ", texto_limpo).strip(" -:,")
+                return nome_cat, texto_limpo or texto.strip()
 
         # Fallback para o classificador baseado em regras de JSON
         cat_classif, incerto = self._classificador.classificar_descricao(texto)
@@ -133,7 +162,7 @@ class MensagemGastoParser:
         - "5 bala lanche"
         - "15 cafezinho lanche"
         - "uber 22,50 transporte inter"
-        - "49,90 farmacia santander conta"
+        - "49,90 farmacia saude debito"
         """
         linha = texto.strip()
         if not linha or linha.startswith("/"):

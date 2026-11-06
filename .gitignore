@@ -35,6 +35,7 @@ backups/*
 # 3. Regras Pessoais e Documentos Internos com Dados Sensíveis
 regras_terceiros.json
 regras_categoria.json
+regras_telegram.json
 seed.json
 regras-negocio.md
 

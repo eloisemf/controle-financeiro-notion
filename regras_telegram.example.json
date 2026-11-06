@@ -1,0 +1,40 @@
+{
+  "contas": {
+    "santander conta": "Santader Conta",
+    "debito santander": "Santader Conta",
+    "pix santander": "Santader Conta",
+    "inter conta": "Inter Conta",
+    "debito inter": "Inter Conta",
+    "pix inter": "Inter Conta",
+    "santander": "Santader Credito",
+    "inter": "Inter Credito",
+    "debito": "Santader Conta",
+    "pix": "Santader Conta"
+  },
+  "categorias": {
+    "lanche": "Lanche",
+    "lanches": "Lanche",
+    "cafe": "Lanche",
+    "alimentacao": "Alimentação",
+    "mercado": "Alimentação",
+    "almoco": "Alimentação",
+    "transporte privado": "Transporte Privado",
+    "transporte": "Transporte Privado",
+    "uber": "Transporte Privado",
+    "transporte publico": "Transporte Público",
+    "metro": "Transporte Público",
+    "saude": "Saúde",
+    "farmacia": "Saúde",
+    "beleza": "Beleza",
+    "roupa": "Roupa",
+    "lazer": "Lazer",
+    "livro": "Livro",
+    "cursos": "Cursos",
+    "casa": "Casa",
+    "utilidade": "Utilidade",
+    "academia": "Academia",
+    "viagem": "Viagem",
+    "eletronicos": "Eletronicos",
+    "streamings": "Streamings"
+  }
+}
