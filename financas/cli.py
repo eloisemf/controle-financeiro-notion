@@ -257,7 +257,12 @@ def executar_investimentos(args: argparse.Namespace) -> None:
             market_data=market_data,
         )
 
-        if getattr(args, "sincronizar_aportes", False):
+        deve_sincronizar = (
+            getattr(args, "sincronizar_aportes", False)
+            or args.cotacao
+            or args.fechar_mes
+        )
+        if deve_sincronizar:
             logger.info("Sincronizando Aportes com a Carteira (Qtd e Preço Médio)...")
             sincronizados = service.sincronizar_aportes_carteira(dry_run=args.dry_run)
             print("-" * 75)
