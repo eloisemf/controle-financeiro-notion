@@ -52,6 +52,15 @@ jobs:
             exit 1
           fi
 
+      - name: Preparar Arquivos de Regras
+        run: |
+          if [ ! -f regras_categoria.json ] && [ -f regras_categoria.example.json ]; then
+            cp regras_categoria.example.json regras_categoria.json
+          fi
+          if [ ! -f regras_telegram.json ] && [ -f regras_telegram.example.json ]; then
+            cp regras_telegram.example.json regras_telegram.json
+          fi
+
       - name: Lançar Gastos Fixos do Mês
         if: ${{ github.event_name == 'schedule' || inputs.acao == 'lancar_fixos' || inputs.acao == 'ambos' }}
         run: |

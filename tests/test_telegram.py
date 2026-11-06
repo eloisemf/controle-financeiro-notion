@@ -115,5 +115,71 @@ class TestTelegramParsers(unittest.TestCase):
             self.parser.criar_lancamento(gasto)
 
 
+class TestTelegramBotServicePrevistos(unittest.TestCase):
+    """Testa lembretes de gastos fixos previstos e comando de confirmação."""
+
+    def setUp(self) -> None:
+        self.mock_config = MagicMock()
+        self.mock_config.telegram_bot_token = "fake_token"
+        self.mock_config.telegram_chat_id = "123456"
+        self.mock_config.cartoes = {}
+
+        self.mock_client = MagicMock()
+        self.mock_telegram = MagicMock()
+        self.mock_repos = MagicMock()
+
+        from financas.telegram.service import TelegramBotService
+
+        self.service = TelegramBotService(
+            config=self.mock_config,
+            client=self.mock_client,
+            telegram_client=self.mock_telegram,
+            repos=self.mock_repos,
+        )
+
+    def test_verificar_e_notificar_gastos_previstos_envia_inline_keyboard(self) -> None:
+        self.mock_repos.transacoes.buscar_previstos_para_data.return_value = [
+            {
+                "page_id": "page-123",
+                "descricao": "Aluguel",
+                "valor": Decimal("1200.00"),
+                "conta": "Santader Conta",
+                "data": date(2026, 11, 7),
+            }
+        ]
+
+        total = self.service.verificar_e_notificar_gastos_previstos(date(2026, 11, 7))
+        self.assertEqual(total, 1)
+        self.mock_telegram.enviar_mensagem.assert_called_once()
+        chamada = self.mock_telegram.enviar_mensagem.call_args
+        self.assertIn("Aluguel", chamada[0][0])
+        self.assertIn("R$ 1.200,00", chamada[0][0])
+        self.assertIn("reply_markup", chamada[1])
+
+    def test_tratar_callback_confirmar_muda_status_para_realizado(self) -> None:
+        self.service._tratar_callback(
+            cb_id="cb-999",
+            data="confirmar:page-123",
+            chat_id="123456",
+            dry_run=False,
+        )
+        self.mock_repos.transacoes.marcar_como_realizado.assert_called_once_with("page-123")
+        self.mock_telegram.responder_callback_query.assert_called_once_with(
+            "cb-999", texto="Status alterado para Realizado!"
+        )
+        self.mock_telegram.enviar_mensagem.assert_called_once()
+
+    def test_comando_confirmar_por_nome(self) -> None:
+        self.mock_repos.transacoes.buscar_previsto_por_nome.return_value = {
+            "page_id": "page-456",
+            "descricao": "Internet Claro",
+            "valor": Decimal("120.00"),
+        }
+        self.service._tratar_comando("/confirmar Internet", chat_id="123456", dry_run=False)
+        self.mock_repos.transacoes.marcar_como_realizado.assert_called_once_with("page-456")
+        self.mock_telegram.enviar_mensagem.assert_called_once()
+        self.assertIn("Internet Claro", self.mock_telegram.enviar_mensagem.call_args[0][0])
+
+
 if __name__ == "__main__":
     unittest.main()

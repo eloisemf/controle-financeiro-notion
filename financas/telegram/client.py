@@ -66,6 +66,7 @@ class TelegramClient:
         texto: str,
         chat_id: str | int | None = None,
         parse_mode: str | None = "Markdown",
+        reply_markup: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Envia uma mensagem de texto para o chat especificado ou padrão."""
         alvo = str(chat_id).strip() if chat_id else self._default_chat_id
@@ -79,8 +80,29 @@ class TelegramClient:
         }
         if parse_mode:
             payload["parse_mode"] = parse_mode
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
 
         return self._request("POST", "sendMessage", json=payload).get("result", {})
+
+    def responder_callback_query(
+        self,
+        callback_query_id: str,
+        texto: str | None = None,
+        show_alert: bool = False,
+    ) -> dict[str, Any]:
+        """Confirma o recebimento de um clique de botão inline no Telegram."""
+        payload: dict[str, Any] = {
+            "callback_query_id": callback_query_id,
+            "show_alert": show_alert,
+        }
+        if texto:
+            payload["text"] = texto
+        try:
+            return self._request("POST", "answerCallbackQuery", json=payload).get("result", {})
+        except Exception as exc:
+            logger.warning("Falha ao responder callback query %s: %s", callback_query_id, exc)
+            return {}
 
     def obter_atualizacoes(
         self,

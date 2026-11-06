@@ -82,6 +82,17 @@ class TelegramBotService:
             if up_id > maior_update_id:
                 maior_update_id = up_id
 
+            # Tratamento de cliques em botões inline (callback_query)
+            cb = up.get("callback_query")
+            if cb:
+                cb_id = str(cb.get("id", ""))
+                cb_data = str(cb.get("data", ""))
+                cb_from = str(cb.get("from", {}).get("id", ""))
+                if not self.config.telegram_chat_id or cb_from == str(self.config.telegram_chat_id):
+                    self._tratar_callback(cb_id, cb_data, chat_id=cb_from or str(self.config.telegram_chat_id), dry_run=dry_run)
+                    processadas += 1
+                continue
+
             msg = up.get("message", {})
             if not msg:
                 continue
@@ -96,7 +107,7 @@ class TelegramBotService:
 
             # 1. Comandos
             if texto.startswith("/"):
-                self._tratar_comando(texto, chat_id)
+                self._tratar_comando(texto, chat_id, dry_run=dry_run)
                 processadas += 1
                 continue
 
@@ -117,8 +128,9 @@ class TelegramBotService:
 
         return processadas
 
-    def _tratar_comando(self, comando: str, chat_id: str) -> None:
-        cmd = comando.lower().split()[0]
+    def _tratar_comando(self, comando: str, chat_id: str, dry_run: bool = False) -> None:
+        partes_cmd = comando.split()
+        cmd = partes_cmd[0].lower()
         if cmd in ("/start", "/ajuda", "/help"):
             msg_ajuda = (
                 "👋 *Olá! Sou seu assistente do Controle Financeiro.*\n\n"
@@ -134,9 +146,20 @@ class TelegramBotService:
                 "Comandos úteis:\n"
                 "/resumo — Exibe o relatório de gastos, saldo livre e faturas\n"
                 "/investimentos — Atualiza cotações e mostra seu patrimônio\n"
+                "/confirmar [nome] — Confirma um gasto previsto como Realizado\n"
                 "/ajuda — Exibe esta mensagem de ajuda"
             )
             self._telegram.enviar_mensagem(msg_ajuda, chat_id=chat_id)
+
+        elif cmd in ("/confirmar", "/confirmado", "/pago"):
+            if len(partes_cmd) < 2:
+                self._telegram.enviar_mensagem(
+                    "💡 Informe o nome do gasto previsto. Exemplo:\n`/confirmar Aluguel` ou `/confirmar Internet`",
+                    chat_id=chat_id,
+                )
+                return
+            termo = comando.split(maxsplit=1)[1].strip()
+            self._confirmar_previsto_por_termo(termo, chat_id, dry_run=dry_run)
 
         elif cmd == "/resumo":
             self._telegram.enviar_mensagem("⏳ Gerando resumo financeiro...", chat_id=chat_id)
@@ -168,6 +191,46 @@ class TelegramBotService:
                 "❓ Comando não reconhecido. Digite /ajuda para ver as instruções.",
                 chat_id=chat_id,
             )
+
+    def _tratar_callback(self, cb_id: str, data: str, chat_id: str, dry_run: bool = False) -> None:
+        """Trata cliques em botões inline (ex: confirmar gasto fixo previsto)."""
+        if data.startswith("confirmar:"):
+            page_id = data.split(":", maxsplit=1)[1]
+            if not dry_run:
+                self._repos.transacoes.marcar_como_realizado(page_id)
+            self._telegram.responder_callback_query(cb_id, texto="Status alterado para Realizado!")
+            self._telegram.enviar_mensagem(
+                "✅ *Gasto Fixo Confirmado!*\nO status foi alterado para *Realizado* com sucesso no seu Notion.",
+                chat_id=chat_id,
+            )
+        else:
+            self._telegram.responder_callback_query(cb_id)
+
+    def _confirmar_previsto_por_termo(self, termo: str, chat_id: str, dry_run: bool = False) -> None:
+        """Localiza um gasto previsto pelo nome digitado e atualiza para Realizado."""
+        encontrado = self._repos.transacoes.buscar_previsto_por_nome(termo)
+        if not encontrado:
+            self._telegram.enviar_mensagem(
+                f"⚠️ Não encontrei nenhum gasto pendente com status `Previsto` contendo '*{termo}*'.",
+                chat_id=chat_id,
+            )
+            return
+
+        desc = encontrado["descricao"]
+        val_fmt = f"R$ {encontrado['valor']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        if not dry_run:
+            self._repos.transacoes.marcar_como_realizado(encontrado["page_id"])
+
+        msg = (
+            "✅ *Gasto Confirmado com Sucesso!*\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"• *Item:* {desc}\n"
+            f"• *Valor:* *{val_fmt}*\n"
+            "• *Novo Status:* *Realizado* 🟢\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "O saldo livre e as fórmulas do Notion já foram atualizados!"
+        )
+        self._telegram.enviar_mensagem(msg, chat_id=chat_id)
 
     def _tratar_gasto_texto(self, texto: str, chat_id: str, dry_run: bool = False) -> None:
         gasto = self._parser.parse_mensagem(texto)
@@ -286,3 +349,43 @@ class TelegramBotService:
             self._telegram.enviar_mensagem(texto, chat_id=self.config.telegram_chat_id)
         else:
             self._telegram.enviar_mensagem(texto)
+
+    def verificar_e_notificar_gastos_previstos(self, data_referencia: date | None = None) -> int:
+        """Verifica se há gastos com status 'Previsto' com cobrança na data de hoje e pergunta ao usuário."""
+        hoje = data_referencia or date.today()
+        previstos = self._repos.transacoes.buscar_previstos_para_data(hoje)
+        if not previstos:
+            logger.info("Nenhum gasto previsto encontrado com vencimento em %s.", hoje.isoformat())
+            return 0
+
+        chat_id = self.config.telegram_chat_id
+        if not chat_id:
+            logger.warning("TELEGRAM_CHAT_ID não configurado. Não é possível enviar lembrete.")
+            return 0
+
+        for item in previstos:
+            desc = item["descricao"]
+            val_fmt = f"R$ {item['valor']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            conta = item["conta"]
+            page_id = item["page_id"]
+
+            msg = (
+                "🔔 *Lembrete de Gasto Fixo Previsto Hoje:*\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"• *Item:* {desc}\n"
+                f"• *Valor:* *{val_fmt}*\n"
+                f"• *Meio de Pagamento:* {conta}\n"
+                f"• *Data Prevista:* {hoje.strftime('%d/%m/%Y')}\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "👉 Esse valor caiu certinho na conta/cartão?\n\n"
+                f"💡 Clique no botão abaixo para confirmar ou responda `/confirmar {desc}`."
+            )
+            botoes = {
+                "inline_keyboard": [
+                    [{"text": f"✅ Confirmar {desc}", "callback_data": f"confirmar:{page_id}"}]
+                ]
+            }
+            self._telegram.enviar_mensagem(msg, chat_id=chat_id, reply_markup=botoes)
+
+        logger.info("Notificados %d gastos previstos para o chat %s.", len(previstos), chat_id)
+        return len(previstos)

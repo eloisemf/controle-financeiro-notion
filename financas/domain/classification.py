@@ -13,6 +13,7 @@ from financas.domain.models import CATEGORIA_DIVERSOS, Pessoa, normalizar_texto_
 logger = logging.getLogger(__name__)
 
 ARQUIVO_REGRAS_CATEGORIA = Path(__file__).resolve().parents[2] / "regras_categoria.json"
+ARQUIVO_REGRAS_CATEGORIA_EXAMPLE = Path(__file__).resolve().parents[2] / "regras_categoria.example.json"
 
 # Mapeamento básico padrão de palavras-chave para categorias do Notion (fallback = 'Diversos')
 REGRAS_CATEGORIA_PADRAO: tuple[tuple[str, str], ...] = (
@@ -57,6 +58,8 @@ def carregar_regras_categoria(caminho: Path | str | None = None) -> tuple[tuple[
         return _CACHE_REGRAS_PADRAO
 
     alvo = Path(caminho) if caminho else ARQUIVO_REGRAS_CATEGORIA
+    if not alvo.is_file() and not caminho and ARQUIVO_REGRAS_CATEGORIA_EXAMPLE.is_file():
+        alvo = ARQUIVO_REGRAS_CATEGORIA_EXAMPLE
     resultado = REGRAS_CATEGORIA_PADRAO
     if alvo.is_file():
         try:

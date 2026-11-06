@@ -207,6 +207,67 @@ class TransacoesRepository(BaseNotionRepository):
             properties={ColunasTransacoes.CRIADO_EM: Prop.date_iso(nova_data)},
         )
 
+    def marcar_como_realizado(self, transacao_page_id: str) -> None:
+        """Altera o status de um lançamento de 'Previsto' para 'Realizado'."""
+        self._client.update_page(
+            page_id=transacao_page_id,
+            properties={ColunasTransacoes.STATUS: Prop.select(StatusTransacao.REALIZADO.value)},
+        )
+
+    def buscar_previstos_para_data(self, data_referencia: date) -> list[dict[str, Any]]:
+        """Busca todas as transações com Status='Previsto' agendadas para uma data específica."""
+        filtro = {
+            "and": [
+                {
+                    "property": ColunasTransacoes.STATUS,
+                    "select": {"equals": StatusTransacao.PREVISTO.value},
+                },
+                {
+                    "property": ColunasTransacoes.CRIADO_EM,
+                    "date": {"equals": data_referencia.isoformat()},
+                },
+            ]
+        }
+        paginas = self._client.query_database_all(self._database_id, filter_payload=filtro)
+        itens: list[dict[str, Any]] = []
+        for p in paginas:
+            nome = NotionParser.page_title(p)
+            val = NotionParser.prop_decimal(p, ColunasTransacoes.VALOR)
+            contas = (
+                NotionParser.prop_relation_ids(p, ColunasTransacoes.SAIDA_DE)
+                or NotionParser.prop_relation_ids(p, ColunasTransacoes.ENTRADA_EM)
+            )
+            nome_conta = "Conta/Cartão"
+            if contas:
+                nome_conta = self._catalogo.nome_conta(contas[0])
+            itens.append({
+                "page_id": NotionParser.normalize_id(p["id"]),
+                "descricao": nome,
+                "valor": val,
+                "conta": nome_conta,
+                "data": data_referencia,
+            })
+        return itens
+
+    def buscar_previsto_por_nome(self, termo: str) -> dict[str, Any] | None:
+        """Busca um lançamento pendente com Status='Previsto' que contenha o termo no título."""
+        termo_norm = normalizar_texto_chave(termo)
+        filtro = {
+            "property": ColunasTransacoes.STATUS,
+            "select": {"equals": StatusTransacao.PREVISTO.value},
+        }
+        paginas = self._client.query_database_all(self._database_id, filter_payload=filtro)
+        for p in paginas:
+            nome = NotionParser.page_title(p)
+            if termo_norm in normalizar_texto_chave(nome):
+                val = NotionParser.prop_decimal(p, ColunasTransacoes.VALOR)
+                return {
+                    "page_id": NotionParser.normalize_id(p["id"]),
+                    "descricao": nome,
+                    "valor": val,
+                }
+        return None
+
     def conciliar_previsto_para_realizado(
         self,
         transacao_page_id: str,

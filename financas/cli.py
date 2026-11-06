@@ -393,6 +393,11 @@ def construir_parser_telegram(
         help="Atualiza cotações de investimentos e dispara o resumo semanal no Telegram.",
     )
     parser.add_argument(
+        "--checar-previstos",
+        action="store_true",
+        help="Verifica se há gastos fixos previstos para a data de hoje e envia lembrete no Telegram.",
+    )
+    parser.add_argument(
         "-n",
         "--dry-run",
         action="store_true",
@@ -413,7 +418,14 @@ def executar_telegram(args: argparse.Namespace) -> None:
             bot_service.disparar_resumo_semanal()
             print("✅ Resumo semanal enviado com sucesso para o Telegram!")
 
-        if getattr(args, "sync", False) or not getattr(args, "semanal", False):
+        if getattr(args, "checar_previstos", False):
+            logger.info("Verificando gastos fixos previstos para a data de hoje...")
+            notificados = bot_service.verificar_e_notificar_gastos_previstos()
+            print(f"✅ Verificação de previstos: {notificados} lembrete(s) enviado(s).")
+
+        if getattr(args, "sync", False) or (
+            not getattr(args, "semanal", False) and not getattr(args, "checar_previstos", False)
+        ):
             logger.info("Verificando mensagens pendentes no Telegram...")
             qtd = bot_service.processar_mensagens_pendentes(dry_run=args.dry_run)
             print(f"✅ Processamento concluído: {qtd} mensagem(ns) tratada(s).")
