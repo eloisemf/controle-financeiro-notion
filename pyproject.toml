@@ -1,0 +1,68 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "controle-financeiro"
+version = "0.2.0"
+description = "Automação e conciliação de controle financeiro pessoal no Notion"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+dependencies = [
+    "holidays>=0.40",
+    "pypdf>=4.0",
+    "python-dotenv>=1.0",
+    "requests>=2.31",
+]
+
+[project.optional-dependencies]
+dev = [
+    "mypy>=1.10",
+    "pytest>=8.0",
+    "ruff>=0.5",
+]
+
+[project.scripts]
+financas = "financas.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["financas*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # Pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "UP",   # pyupgrade
+    "T20",  # flake8-print (evita prints em camadas de serviço, domínio e repositório)
+    "LOG",  # flake8-logging
+    "G",    # flake8-logging-format (formatação preguiçosa de log)
+]
+ignore = []
+
+[tool.ruff.lint.per-file-ignores]
+# A interface CLI e scripts de apresentação no terminal utilizam print para formatar tabelas e relatórios
+"financas/cli.py" = ["T201"]
+"atualizar_investimentos.py" = ["T201"]
+"ingest_fatura.py" = ["T201"]
+"inspect_notion.py" = ["T201"]
+"lancar_fixos.py" = ["T201"]
+"setup_notion.py" = ["T201"]
+"tests/*" = ["T201"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = false
+ignore_missing_imports = true

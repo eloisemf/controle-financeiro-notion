@@ -1,0 +1,64 @@
+{
+  "pessoas": [
+    {
+      "nome": "Amigo Exemplo",
+      "nome_no_pix_fatura": "Amigo Pix; Terceiro Compra",
+      "saldo_inicial": "0.00",
+      "observacao": "Exemplo de cadastro de terceiro para conciliação automática de Pix e faturas"
+    }
+  ],
+  "gastos_fixos": [
+    {
+      "nome": "Spotify",
+      "nome_na_fatura": "Spotify",
+      "valor_meu": "21.90",
+      "valor_cobrado": "21.90",
+      "categoria": "Streamings",
+      "uso_dinheiro": "Nao essencial",
+      "pago_com": "Santander Credito",
+      "dia_cobranca": 15,
+      "periodicidade": "Mensal",
+      "ativo": true
+    },
+    {
+      "nome": "Internet Fibra",
+      "nome_na_fatura": "Claro Fibra; Vivo Fibra",
+      "valor_meu": "100.00",
+      "valor_cobrado": "100.00",
+      "categoria": "Casa",
+      "uso_dinheiro": "Essencial",
+      "pago_com": "Santander Conta",
+      "dia_cobranca": 10,
+      "periodicidade": "Mensal",
+      "ativo": true,
+      "observacao": "Débito automático"
+    },
+    {
+      "nome": "Luz",
+      "nome_na_fatura": "Energia Eletrica",
+      "valor_meu": "150.00",
+      "valor_cobrado": "150.00",
+      "categoria": "Casa",
+      "uso_dinheiro": "Essencial",
+      "pago_com": "Santander Conta",
+      "dia_cobranca": 25,
+      "periodicidade": "Mensal",
+      "ativo": true
+    },
+    {
+      "nome": "Assinatura Dividida",
+      "nome_na_fatura": "Assinatura Amigo",
+      "valor_meu": "0.00",
+      "valor_cobrado": "50.00",
+      "valor_a_receber": "50.00",
+      "categoria": "Emprestimo cartão",
+      "uso_dinheiro": "Emprestimo",
+      "pago_com": "Santander Credito",
+      "pessoa": "Amigo Exemplo",
+      "dia_cobranca": 20,
+      "periodicidade": "Mensal",
+      "ativo": true,
+      "observacao": "Exemplo de despesa no cartão repassada para terceiro"
+    }
+  ]
+}

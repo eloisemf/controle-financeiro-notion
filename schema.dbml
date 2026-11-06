@@ -1,0 +1,387 @@
+// =====================================================================
+// DBML - Arquitetura de Dados: Finanças Pessoais (Notion Workspace)
+// Compatível com dbdiagram.io e visualizadores DBML / Mermaid
+// Mapeamento 100% Exaustivo de Todas as Propriedades e Colunas
+// =====================================================================
+
+Project FinancasNotion {
+  database_type: "Notion Relational Schema"
+  Note: '''
+    Schema relacional completo de todas as bases de dados financeiras do Notion:
+    - Módulo Operacional & Fluxo de Caixa (Transações, Meses, Gastos Fixos, Contas/Cartões, Parcelas, Pessoas, Categorias, Uso do Dinheiro, Metas de Gastos)
+    - Módulo Patrimônio & Investimentos (Meus Investimentos, Instituições, Metas Financeiras)
+  '''
+}
+
+// =====================================================================
+// 1. TRANSAÇÕES & ORÇAMENTO
+// =====================================================================
+
+Table transacoes as "Transações" {
+  id uuid [pk, note: "Notion Page ID"]
+  name varchar [not null, note: "Descrição da transação (Título)"]
+  nome_fantasia varchar [note: "Nome simplificado/identificado do estabelecimento"]
+  valor decimal(12,2) [not null, note: "Valor monetário da saída ou entrada"]
+  valor_a_receber decimal(12,2) [note: "Valor repassado para terceiro (reembolso)"]
+  criado_em date [not null, note: "Data da compra/lançamento ou competência da fatura"]
+  data_de_criacao timestamp [note: "Data/hora exata da criação nativa no Notion (created_time)"]
+  tipo_transacao varchar [not null, note: "Saida | Entrada | Movimentação Interna | Pagar fatura cartão | Reembolso"]
+  recorrencia varchar [note: "Fixo | Não recorrente"]
+  status varchar [not null, default: "Realizado", note: "Previsto | Realizado"]
+  
+  // Foreign Keys (Relações Notion)
+  mes_id uuid [not null, ref: > meses.id]
+  categoria_id uuid [ref: > categorias.id]
+  saida_de_id uuid [ref: > contas_e_cartoes.id]
+  entrada_em_id uuid [ref: > contas_e_cartoes.id]
+  tipo_saida_id uuid [ref: > uso_do_dinheiro.id]
+  gasto_fixo_id uuid [ref: > gastos_fixos.id]
+  pessoa_id uuid [ref: > pessoas.id]
+  compra_parcelada_id uuid [ref: > parcelas.id]
+
+  // Fórmulas & Rollups
+  data_do_mes date [note: "Rollup: Mês.MesData (Earliest date)"]
+  mes_atual boolean [note: "Fórmula: Vira automaticamente no dia 25 de cada mês"]
+  valor_total decimal(12,2) [note: "Fórmula: Valor * Mês.length()"]
+
+  Note: "Hub central de todas as entradas, saídas, faturas, fixos e reembolsos"
+}
+
+Table meses as "Meses" {
+  id uuid [pk, note: "Notion Page ID"]
+  name varchar [not null, note: "Competência (ex: '2026-Novembro') (Título)"]
+  mes_data date [not null, note: "Data base (01 do mês)"]
+  salario_base decimal(12,2) [note: "Salário fixo líquido mensal de referência"]
+  bonus decimal(12,2) [note: "Proventos extras (13º, PLR, bonificação, férias)"]
+  meta_fixos decimal(12,2) [note: "Teto planejado para gastos fixos e parcelas (~50%)"]
+  meta_livre decimal(12,2) [note: "Teto planejado para gastos livres e variáveis (~25%)"]
+  meta_investimento decimal(12,2) [note: "Meta de aporte mensal em investimentos (~24%)"]
+  meta_de_gastos decimal(12,2) [note: "Valor customizado opcional de meta de gastos"]
+
+  // Fórmulas de Agregação de Transações
+  receita decimal(12,2) [note: "Fórmula: Soma de transações de Entrada do mês"]
+  meus_gastos decimal(12,2) [note: "Fórmula: Saídas excluindo terceiros (Pessoa vazia)"]
+  gastos_terceiros decimal(12,2) [note: "Fórmula: Saídas vinculadas a terceiros (Pessoa preenchida)"]
+  a_receber_terceiros decimal(12,2) [note: "Fórmula: Total a ser reembolsado por terceiros"]
+  reembolsos_recebidos decimal(12,2) [note: "Fórmula: Pix de terceiros já recebidos"]
+  
+  // Fórmulas de Faturas por Cartão & Contas
+  fatura_santander decimal(12,2) [note: "Fórmula: Saídas do ciclo no Santander Crédito"]
+  fatura_bradesco decimal(12,2) [note: "Fórmula: Saídas do ciclo no Bradesco Crédito"]
+  fatura_inter decimal(12,2) [note: "Fórmula: Saídas do ciclo no Inter Crédito"]
+  pix_debito decimal(12,2) [note: "Fórmula: Saídas pagas via conta corrente (Débito/Pix)"]
+  gastos_fixos decimal(12,2) [note: "Fórmula: Saídas fixas pagas via conta corrente"]
+  fixos_previstos decimal(12,2) [note: "Fórmula: Saídas com Status = Previsto"]
+
+  // Fórmulas de Metas, Fluxo de Caixa e Decisão
+  meta_mensal decimal(12,2) [note: "Fórmula: Meta Fixos + Meta Livre (teto total de gastos)"]
+  comprometido decimal(5,4) [note: "Fórmula (Barra): Meus Gastos / Meta Mensal"]
+  saldo_livre_real decimal(12,2) [note: "Fórmula: ((Receita > 0 ? Receita : Salário Base) + Bônus) - Meus Gastos"]
+  saldo_caixa_dia_25 decimal(12,2) [note: "Fórmula: ((Receita > 0 ? Receita : Salário Base) + Bônus) - (Meus Gastos + Gastos Terceiros)"]
+
+  // Fórmulas de Cards Visuais para Galeria / Frontend Notion
+  card_salario_base varchar [note: "Fórmula: Card '💵 Salário Base' ou '💵 Salário + Bônus'"]
+  card_meus_gastos varchar [note: "Fórmula: Card estilizado '🔴 Meus Gastos: R$ X'"]
+  card_saldo_livre varchar [note: "Fórmula: Card estilizado '🟢 Saldo Livre: R$ X'"]
+  card_caixa_dia_25 varchar [note: "Fórmula: Card '💼 Caixa Dia 25: R$ X'"]
+  card_santander varchar [note: "Fórmula: Card '🔴 Santander: R$ X'"]
+  card_bradesco varchar [note: "Fórmula: Card '🔴 Bradesco: R$ X'"]
+  card_inter varchar [note: "Fórmula: Card '🔴 Inter: R$ X'"]
+  card_patrimonio varchar [note: "Fórmula: Card '💰 Patrimônio: R$ X'"]
+
+  // Rollups & Relações de Patrimônio
+  patrimonio_investido decimal(12,2) [note: "Rollup: Soma de Valor no Dia de Histórico de Saldos"]
+  patrimonio_mes_anterior decimal(12,2) [note: "Saldo consolidado do mês anterior para cálculo de rendimento puro"]
+  aportes_no_mes decimal(12,2) [note: "Rollup: Soma de Valor Total de Aportes do Mês"]
+  rendimento_do_mes decimal(12,2) [note: "Fórmula: Patrimônio Investido - Patrimônio Mês Anterior - Aportes no Mês"]
+  historico_saldos uuid [ref: < historico_de_saldos.mes_id]
+  aportes_do_mes uuid [ref: < aportes_e_movimentacoes.mes_id]
+
+  // Foreign Keys / Relações
+  transactions uuid [ref: < transacoes.mes_id]
+  this_nao_alterar uuid [note: "Auto-relação: aponta para si mesma para rollups locais"]
+
+  Note: "Consolidação mensal e planejamento orçamentário central"
+}
+
+Table categorias as "Categorias" {
+  id uuid [pk, note: "Notion Page ID"]
+  name varchar [not null, note: "Nome da categoria com emoji (Título)"]
+  valor_gasto decimal(12,2) [note: "Fórmula: Gasto consolidado no mês atual selecionado"]
+  transacoes uuid [ref: < transacoes.categoria_id]
+
+  Note: "Categorias financeiras (Transporte Privado, Luz, Aluguel, Condominio, etc.)"
+}
+
+Table uso_do_dinheiro as "Uso do dinheiro" {
+  id uuid [pk, note: "Notion Page ID"]
+  name varchar [not null, note: "Essencial, Nao essencial, Emprestimo, Investimento (Título)"]
+  planejamento decimal(12,2) [note: "Teto orçamentário definido para a prioridade"]
+  gasto_no_mes decimal(12,2) [note: "Fórmula: Consumo no mês atual"]
+  acompanhamento varchar [note: "Fórmula: Indicador visual de consumo do orçamento"]
+  transacoes uuid [ref: < transacoes.tipo_saida_id]
+
+  Note: "Macro-divisão do orçamento de acordo com prioridade de vida"
+}
+
+// =====================================================================
+// 2. MEIOS DE PAGAMENTO, FIXOS & PARCELAMENTOS
+// =====================================================================
+
+Table contas_e_cartoes as "Contas, cartões e reservas" {
+  id uuid [pk, note: "Notion Page ID"]
+  name varchar [not null, note: "Santander Credito, Santander Conta, Bradesco... (Título)"]
+  tipo varchar [not null, note: "Conta (Débito e Pix) | Cartão de crédito"]
+  situacao varchar [default: "Ativo", note: "Ativo | Inativo | Hibernando"]
+  saldo_inicial decimal(12,2) [default: 0.00]
+  data_de_vencimento varchar [note: "Dia do vencimento da fatura (ex: dia 27)"]
+  dia_de_fechamento varchar [note: "Dia aproximado do fechamento da fatura"]
+  limite_de_credito decimal(12,2) [note: "Limite total contratado do cartão"]
+  limite_que_posso_usar decimal(12,2) [note: "Sub-limite operacional seguro desejado"]
+  fatura_do_mes_realizada decimal(12,2) [note: "Fatura do mês corrente considerando apenas compras que já caíram (Realizado)"]
+
+  // Fórmulas Financeiras
+  receitas decimal(12,2) [note: "Fórmula: Entradas confirmadas"]
+  saidas_calc decimal(12,2) [note: "Fórmula: Saídas confirmadas"]
+  saldo decimal(12,2) [note: "Fórmula: Receitas - Saídas + Saldo inicial"]
+  limite_disponivel decimal(12,2) [note: "Fórmula: Limite de crédito + Saldo (valor restante de crédito)"]
+  limite_usado_pct decimal(5,2) [note: "Fórmula: Percentual consumido do limite do cartão"]
+
+  // Fórmulas de Cards Visuais para Galeria
+  card_fatura_atual varchar [note: "Fórmula: '🧾 Fatura Atual: R$ X' (apenas mês atual e realizados)"]
+  card_total_comprometido_saldo varchar [note: "Fórmula: '🔒 Limite Utilizado: R$ X' (comprometido total) ou '💰 Saldo em Conta'"]
+  card_disponivel varchar [note: "Fórmula: '🟢 Disponível: R$ X'"]
+  card_fechamento varchar [note: "Fórmula: '🔒 Fecha dia X'"]
+  card_vencimento varchar [note: "Fórmula: '📅 Vence dia X'"]
+  card_limite_meu varchar [note: "Fórmula: '💳 Meu Limite: R$ X'"]
+  card_limite_total varchar [note: "Fórmula: '💳 Limite Total: R$ X'"]
+
+  // Foreign Keys / Relações
+  entradas uuid [ref: < transacoes.entrada_em_id]
+  saidas uuid [ref: < transacoes.saida_de_id]
+
+  Note: "Contas correntes de débito/Pix e cartões de crédito"
+}
+
+Table gastos_fixos as "Gastos Fixos" {
+  id uuid [pk, note: "Notion Page ID"]
+  nome varchar [not null, note: "Aluguel, Condomínio, Spotify, Luz, Celular... (Título)"]
+  nome_na_fatura varchar [note: "Texto na fatura para conciliação automática"]
+  valor_cobrado decimal(12,2) [not null, note: "Valor nominal total lançado na conta ou cartão"]
+  valor_a_receber decimal(12,2) [note: "Valor a ser reembolsado caso seja de terceiro"]
+  dia_da_cobranca int [note: "Dia do mês em que ocorre a cobrança"]
+  periodicidade varchar [default: "Mensal", note: "Mensal | Anual"]
+  ativo boolean [not null, default: true]
+  inicio date [note: "Data de início da vigência do contrato"]
+  fim date [note: "Data de término ou renovação da assinatura"]
+  observacao text [note: "Notas adicionais de débito automático ou termos"]
+
+  // Fórmulas
+  custo_anual decimal(12,2) [note: "Fórmula: Valor cobrado * 12"]
+
+  // Foreign Keys (Relações Notion)
+  categoria_id uuid [not null, ref: > categorias.id]
+  pago_com_id uuid [not null, ref: > contas_e_cartoes.id]
+  uso_dinheiro_id uuid [not null, ref: > uso_do_dinheiro.id]
+  pessoa_id uuid [ref: > pessoas.id]
+  lancamentos uuid [ref: < transacoes.gasto_fixo_id]
+
+  Note: "Compromissos recorrentes mensais e assinaturas"
+}
+
+Table pessoas as "Pessoas" {
+  id uuid [pk, note: "Notion Page ID"]
+  nome varchar [not null, note: "Nome do familiar ou amigo (Título)"]
+  nome_no_pix_fatura varchar [note: "Apelidos ou padrões na fatura/Pix para conciliação"]
+  saldo_inicial decimal(12,2) [default: 0.00]
+  observacao text
+
+  // Fórmulas de Conta-Corrente
+  total_compras decimal(12,2) [note: "Fórmula: Soma de compras feitas no cartão para a pessoa"]
+  total_pago_pix decimal(12,2) [note: "Fórmula: Soma de Pix de reembolso já recebidos da pessoa"]
+  saldo_devedor decimal(12,2) [note: "Fórmula: Saldo Inicial + Total Compras - Total Pago"]
+
+  // Foreign Keys / Relações
+  transacoes uuid [ref: < transacoes.pessoa_id]
+
+  Note: "Conta-corrente individual para controle de empréstimos a terceiros"
+}
+
+Table parcelas as "📦 Parcelas" {
+  id uuid [pk, note: "Notion Page ID"]
+  gasto varchar [not null, note: "Nome da compra parcelada (Título)"]
+  de_quem varchar [note: "Meu | Emprestado"]
+  parcela_atual int [not null, note: "Parcela cobrada no mês atual (0 quando quitado)"]
+  total_parcelas int [not null, note: "Total de parcelas contratadas"]
+  valor_parcela decimal(12,2) [not null, note: "Valor mensal de cada parcela"]
+  inicio varchar [note: "Mês inicial da compra (ex: 2024-Dezembro)"]
+  fim varchar [note: "Mês final da última parcela (ex: 2026-Novembro)"]
+  obs text
+
+  // Foreign Keys
+  cartao_id uuid [not null, ref: > contas_e_cartoes.id]
+  transacoes uuid [ref: < transacoes.compra_parcelada_id]
+
+  // Fórmulas Financeiras
+  valor_total decimal(12,2) [note: "Fórmula: Valor Parcela * Total Parcelas"]
+  falta_pagar decimal(12,2) [note: "Fórmula: Valor Parcela * (Total - Atual + 1)"]
+  progresso varchar [note: "Fórmula: '11/12', '12/13'..."]
+  pct_concluido decimal(5,2) [note: "Fórmula: (Atual - 1)/Total; 100% quando Atual = 0"]
+
+  // Fórmulas de Cards Visuais para Galeria
+  card_parcela varchar [note: "Fórmula: '11/12 • R$ X'"]
+  card_falta_pagar varchar [note: "Fórmula: '⏳ Falta Pagar: R$ X'"]
+  card_total varchar [note: "Fórmula: '💰 Total: R$ X'"]
+  card_termina_na_fatura varchar [note: "Fórmula: '🏁 Termina na fatura: X'"]
+
+  Note: "Controle fino de compras parceladas e liberação futura de limite"
+}
+
+Table metas_de_gastos as "🎯 Metas de Gastos & Orçamento" {
+  id uuid [pk, note: "Notion Page ID"]
+  bloco varchar [not null, note: "🏠 Gastos fixos (casa + cartão/parcelas) | 🛍️ Livre para gastar | 📈 Investimento (Título)"]
+  pct_de_gastos decimal(5,2) [note: "Percentual planejado (ex: 50%, 25%, 24%)"]
+  representa_no_orcamento decimal(12,2) [note: "Valor base do orçamento"]
+  representa_no_orcamento_formula decimal(12,2) [note: "Fórmula: % de gastos * Salário Base"]
+  ja_gastei decimal(12,2) [note: "Valor consolidado consumido do bloco no mês de competência"]
+  posso_gastar decimal(12,2) [note: "Fórmula: Representa no orçamento - Já gastei"]
+  progresso decimal(5,2) [note: "Fórmula (Barra): Já gastei / Representa no orçamento"]
+  
+  // Foreign Keys
+  mes_id uuid [ref: > meses.id]
+
+  Note: "Tabela de distribuição macro-orçamentária localizada na página Gastos Fixos"
+}
+
+// =====================================================================
+// 3. PATRIMÔNIO & INVESTIMENTOS (MÓDULO INDEPENDENTE)
+// =====================================================================
+
+Table meus_investimentos as "Meus Investimentos" {
+  id uuid [pk, note: "Notion Page ID"]
+  nome varchar [not null, note: "Tesouro Selic, Tesouro IPCA+, Fundo DI, ACAO3... (Título)"]
+  tipo varchar [note: "Renda Fixa - Pós-fixada (Selic/CDI) | Renda Fixa - Inflação (IPCA+) | Renda Fixa - Crédito Privado / Infra | Renda Fixa - Prefixada | Renda Variável - Ações | Multimercado"]
+  status varchar [not null, default: "Na Carteira", note: "Na Carteira | Vendido | Vencido"]
+  preco_de_compra decimal(12,2) [note: "Preço unitário ou aporte inicial"]
+  qtd decimal(12,4) [note: "Quantidade de cotas ou títulos"]
+  fracao_de_titulos decimal(12,6) [note: "Quantidade fracionária de títulos do Tesouro Direto para multiplicação automática pelo PU"]
+  valor_atual decimal(12,2) [not null, note: "Saldo bruto atualizado"]
+  valor_com_desconto decimal(12,2) [note: "Saldo líquido estimado descontando impostos/taxas"]
+  data_de_investimento date
+  data_de_vencimento date
+
+  // Foreign Keys
+  instituicao_id uuid [ref: > instituicoes.id]
+  meta_id uuid [ref: > metas_financeiras.id]
+  aportes uuid [ref: < aportes_e_movimentacoes.investimento_id]
+  historico_saldos uuid [ref: < historico_de_saldos.investimento_id]
+
+  // Rollups & Fórmulas
+  soma_aportes decimal(12,2) [note: "Rollup: Soma de Valor Total de Aportes"]
+  qtd_aportes decimal(12,4) [note: "Rollup: Soma de Quantidade de Aportes"]
+  valor_investido decimal(12,2) [note: "Fórmula: Soma Aportes > 0 ? Soma Aportes : Qtd * Preço de Compra"]
+  preco_medio_auto decimal(12,2) [note: "Fórmula: Preço Médio calculado automaticamente a partir dos aportes"]
+  lucro_prejuizo_flag varchar [note: "Fórmula: Flag visual (🟢 Lucro / 🔴 Prejuizo) usada em gráficos"]
+
+  Note: "Carteira consolidada de ativos financeiros e rendimento patrimonial"
+}
+
+Table aportes_e_movimentacoes as "📦 Aportes & Movimentações" {
+  id uuid [pk, note: "Notion Page ID"]
+  nome varchar [not null, note: "Título da operação (ex: 1ª Compra ACAO3)"]
+  data date [not null, note: "Data da compra/venda/aporte"]
+  tipo varchar [not null, note: "Compra / Aporte | Venda / Resgate | Provento / Dividendo | Amortização"]
+  quantidade decimal(12,4) [note: "Quantidade de cotas/ações negociadas"]
+  preco_unitario decimal(12,2) [note: "Preço pago por cota/ação"]
+  taxas_custos decimal(12,2) [default: 0.00, note: "Taxas de corretagem, B3, emolumentos"]
+  valor_total decimal(12,2) [not null, note: "Fórmula automática: (Quantidade * Preço Unitário) + Taxas"]
+  observacao text
+
+  // Foreign Keys
+  investimento_id uuid [not null, ref: > meus_investimentos.id]
+  mes_id uuid [ref: > meses.id]
+
+  Note: "Histórico transacional de compras, vendas e proventos para cálculo automático de Preço Médio"
+}
+
+Table historico_de_saldos as "📸 Histórico de Saldos" {
+  id uuid [pk, note: "Notion Page ID"]
+  registro varchar [not null, note: "Título da foto (ex: ACAO3 - 2026-11-03)"]
+  data_da_foto date [not null, note: "Data do snapshot / fechamento"]
+  valor_no_dia decimal(12,2) [not null, note: "Saldo bruto ou cotação do ativo na data"]
+  qtd_de_cotas decimal(12,4) [note: "Quantidade de cotas na data da foto"]
+  observacao text
+
+  // Foreign Keys
+  investimento_id uuid [not null, ref: > meus_investimentos.id]
+  mes_id uuid [ref: > meses.id]
+
+  Note: "Snapshots mensais por ativo no dia do aporte/fechamento para evolução patrimonial"
+}
+
+Table instituicoes as "Instituições" {
+  id uuid [pk, note: "Notion Page ID"]
+  nome varchar [not null, note: "Santander, Bradesco, Inter, Órama, NuInvest... (Título)"]
+  
+  // Foreign Keys / Relações
+  meus_investimentos uuid [ref: < meus_investimentos.instituicao_id]
+  meus_investimentos_rel_1 uuid
+
+  // Rollups & Fórmulas
+  rollup_valor_atual decimal(12,2) [note: "Rollup: Soma de Valor Atual de Meus Investimentos"]
+  valor_total_investido decimal(12,2) [note: "Rollup: Soma de Valor Total de Meus Investimentos"]
+  valor_total_investido_menos_atual decimal(12,2) [note: "Fórmula: Variação patrimonial total"]
+  valor_em_custodia varchar [note: "Fórmula: '💲 Valor em Custódia: R$ X'"]
+  formula_grafico decimal(12,2) [note: "Fórmula: Indicador numérico para visualizações em gráfico"]
+
+  Note: "Corretoras e bancos onde os investimentos estão alocados"
+}
+
+Table metas_financeiras as "Metas Financeiras" {
+  id uuid [pk, note: "Notion Page ID"]
+  meta varchar [not null, note: "Reserva de Emergência, Casa Entrada, Aposentadoria... (Título)"]
+  valor_esperado decimal(12,2) [not null, note: "Alvo financeiro a atingir"]
+  valor_inicial decimal(12,2) [default: 0.00]
+  data_esperada date
+  completo boolean [default: false]
+
+  // Foreign Keys / Relações
+  meus_investimentos uuid [ref: < meus_investimentos.meta_id]
+
+  // Rollups & Fórmulas
+  aplicado decimal(12,2) [note: "Rollup: Soma de Valor Atual dos investimentos vinculados"]
+  aplicado_de decimal(12,2) [note: "Rollup: Soma auxiliar de investimentos vinculados"]
+  balanco decimal(12,2) [note: "Fórmula: Valor Inicial + Aplicado"]
+  progresso decimal(5,2) [note: "Fórmula (Barra): round(Balanço / Valor Esperado)"]
+  
+  // Fórmulas de Formatação Visual de Exibição
+  esconder_meta varchar [note: "Fórmula: style('Meta', 'b', 'u')"]
+  esconder_progresso varchar [note: "Fórmula: style('Progresso', 'b', 'u')"]
+  esconder_total_aplicado varchar [note: "Fórmula: style('Total aplicado', 'b', 'u')"]
+
+  Note: "Objetivos de vida de curto, médio e longo prazo alimentados por investimentos"
+}
+
+// =====================================================================
+// GRUPOS DE TABELAS (SEGREGANDO OPERACIONAL DE INVESTIMENTOS)
+// =====================================================================
+
+TableGroup Operacional_e_Fluxo_de_Caixa {
+  transacoes
+  meses
+  categorias
+  uso_do_dinheiro
+  contas_e_cartoes
+  gastos_fixos
+  parcelas
+  pessoas
+  metas_de_gastos
+}
+
+TableGroup Patrimonio_e_Investimentos {
+  meus_investimentos
+  aportes_e_movimentacoes
+  historico_de_saldos
+  instituicoes
+  metas_financeiras
+}

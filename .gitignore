@@ -1,0 +1,69 @@
+# ==============================================================================
+# CONTROLE FINANCEIRO - GITIGNORE
+# Proteção estrita contra vazamento de credenciais, PII e arquivos de bancos
+# ==============================================================================
+
+# 1. Credenciais e Variáveis de Ambiente
+.env
+.env.*
+*.env
+!.env.example
+*.pem
+*.key
+*.cert
+
+# 2. Dados Financeiros Sensíveis (Extratos, Faturas, Comprovantes, Imagens, Backups)
+faturas/*
+!faturas/.gitkeep
+extratos/*
+!extratos/.gitkeep
+dados/*
+!dados/.gitkeep
+backups/*
+!backups/.gitkeep
+
+*.csv
+*.pdf
+*.ofx
+*.xlsx
+*.xls
+*.jpg
+*.jpeg
+*.png
+*.webp
+
+# 3. Regras Pessoais e Documentos Internos com Dados Sensíveis
+regras_terceiros.json
+regras_categoria.json
+seed.json
+regras-negocio.md
+
+# 4. Ambiente Virtual e Compilação Python
+.venv/
+venv/
+ENV/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# 5. IDEs e Editores
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-project
+*.sublime-workspace
+
+# 6. Arquivos de Sistema Operacional
+Thumbs.db
+ehthumbs.db
+[Dd]esktop.ini
+.DS_Store
+$RECYCLE.BIN/
