@@ -109,6 +109,8 @@ class AppConfig:
 
     notion_token: str = field(repr=False)
     gemini_api_key: str | None = field(default=None, repr=False)
+    telegram_bot_token: str | None = field(default=None, repr=False)
+    telegram_chat_id: str | None = field(default=None, repr=False)
     nome_titular: str = ""
     databases: NotionDatabaseIds = field(default_factory=NotionDatabaseIds)
     pages: NotionPageIds = field(default_factory=NotionPageIds)
@@ -122,10 +124,14 @@ class AppConfig:
         if not token or not token.strip():
             raise RuntimeError("Variável NOTION_TOKEN ausente ou vazia no arquivo .env.")
         gemini_key = os.getenv("GEMINI_API_KEY")
+        telegram_token = os.getenv("TELEGRAM_BOT_TOKEN")
+        telegram_chat = os.getenv("TELEGRAM_CHAT_ID")
         nome_titular = os.getenv("NOME_TITULAR", "").strip()
         return cls(
             notion_token=token.strip(),
             gemini_api_key=gemini_key.strip() if gemini_key else None,
+            telegram_bot_token=telegram_token.strip() if telegram_token else None,
+            telegram_chat_id=telegram_chat.strip() if telegram_chat else None,
             nome_titular=nome_titular,
             databases=NotionDatabaseIds.from_env(),
             pages=NotionPageIds.from_env(),

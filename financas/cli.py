@@ -136,6 +136,11 @@ def construir_parser_fixos(
         default=mes_atual_default,
         help=f"Mês de competência no formato YYYY-Mes (padrão: {mes_atual_default}).",
     )
+    parser.add_argument(
+        "--notificar",
+        action="store_true",
+        help="Envia confirmação de lançamento dos gastos fixos para o Telegram.",
+    )
     adicionar_argumentos_modo_execucao(parser)
     return parser
 
@@ -225,6 +230,21 @@ def executar_fixos(args: argparse.Namespace) -> None:
                 f"Deseja aplicar os lançamentos previstos de '{args.mes_competencia}' no Notion?"
             ),
         )
+
+        if getattr(args, "notificar", False) and config.telegram_bot_token and not args.dry_run:
+            try:
+                from financas.telegram.client import TelegramClient
+
+                tel = TelegramClient(token=config.telegram_bot_token, chat_id=config.telegram_chat_id)
+                msg = (
+                    f"📌 *Gastos Fixos lançados com sucesso!*\n\n"
+                    f"Os gastos fixos recorrentes do mês *{args.mes_competencia}* "
+                    f"foram gerados como `Previsto` no seu Notion."
+                )
+                tel.enviar_mensagem(msg)
+                logger.info("Notificação de gastos fixos enviada para o Telegram.")
+            except Exception as exc:
+                logger.warning("Não foi possível enviar confirmação ao Telegram: %s", exc)
 
 
 def exibir_resumo_investimentos(resumo: ResumoCarteira | dict) -> None:
@@ -356,6 +376,49 @@ def executar_setup() -> None:
         print(relatorio.formatar_resumo())
 
 
+def construir_parser_telegram(
+    subparser: argparse.ArgumentParser | None = None,
+) -> argparse.ArgumentParser:
+    parser = subparser or argparse.ArgumentParser(
+        description="Integração Telegram: processa mensagens pendentes ou dispara resumo semanal."
+    )
+    parser.add_argument(
+        "--sync",
+        action="store_true",
+        help="Lê e processa mensagens pendentes (gastos manuais, comandos ou arquivos).",
+    )
+    parser.add_argument(
+        "--semanal",
+        action="store_true",
+        help="Atualiza cotações de investimentos e dispara o resumo semanal no Telegram.",
+    )
+    parser.add_argument(
+        "-n",
+        "--dry-run",
+        action="store_true",
+        help="Simula o processamento sem gravar no Notion.",
+    )
+    return parser
+
+
+def executar_telegram(args: argparse.Namespace) -> None:
+    from financas.telegram.service import TelegramBotService
+
+    config = AppConfig.from_env()
+    with NotionClient(token=config.notion_token) as client:
+        bot_service = TelegramBotService(config=config, client=client)
+
+        if getattr(args, "semanal", False):
+            logger.info("Executando rotina semanal do Telegram...")
+            bot_service.disparar_resumo_semanal()
+            print("✅ Resumo semanal enviado com sucesso para o Telegram!")
+
+        if getattr(args, "sync", False) or not getattr(args, "semanal", False):
+            logger.info("Verificando mensagens pendentes no Telegram...")
+            qtd = bot_service.processar_mensagens_pendentes(dry_run=args.dry_run)
+            print(f"✅ Processamento concluído: {qtd} mensagem(ns) tratada(s).")
+
+
 def construir_parser_principal() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="financas",
@@ -384,6 +447,9 @@ def construir_parser_principal() -> argparse.ArgumentParser:
     p_inv = sub.add_parser("investimentos", help="Gerencia cotações e snapshots de investimentos.")
     construir_parser_investimentos(p_inv)
 
+    p_tel = sub.add_parser("telegram", help="Processa mensagens e resumos do Telegram.")
+    construir_parser_telegram(p_tel)
+
     sub.add_parser("inspect", help="Inspeciona as databases visíveis no Notion.")
     sub.add_parser("setup", help="Provisiona e sincroniza databases e dados iniciais no Notion.")
 
@@ -405,6 +471,8 @@ def main(argv: list[str] | None = None) -> None:
         executar_fixos(args)
     elif args.comando == "investimentos":
         executar_investimentos(args)
+    elif args.comando == "telegram":
+        executar_telegram(args)
     elif args.comando == "inspect":
         executar_inspect()
     elif args.comando == "setup":

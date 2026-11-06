@@ -1,0 +1,47 @@
+name: Rotina Semanal (Investimentos e Resumo Financeiro)
+
+on:
+  schedule:
+    # Todo domingo às 23:00 UTC (20:00 Horário de Brasília)
+    - cron: '0 23 * * 0'
+  workflow_dispatch:
+
+concurrency:
+  group: weekly-routine
+  cancel-in-progress: false
+
+jobs:
+  weekly_report:
+    name: Atualizar Carteira e Enviar Resumo Semanal
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout do Repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Instalar Dependências
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Configurar Arquivo .env
+        env:
+          ENV_FILE: ${{ secrets.ENV_FILE }}
+        run: |
+          if [ -n "$ENV_FILE" ]; then
+            echo "$ENV_FILE" > .env
+          else
+            echo "::error::Secret ENV_FILE não configurado no repositório GitHub!"
+            exit 1
+          fi
+
+      - name: Executar Rotina Semanal
+        run: |
+          python telegram_bot.py --semanal
