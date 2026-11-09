@@ -69,7 +69,7 @@ class TelegramBotService:
 
     def processar_mensagens_pendentes(self, dry_run: bool = False) -> int:
         """Lê mensagens novas do Telegram, lança no Notion e responde ao usuário."""
-        updates = self._telegram.obter_atualizacoes(timeout=2)
+        updates = self._telegram.obter_atualizacoes(timeout=0)
         if not updates:
             logger.info("Nenhuma mensagem pendente no Telegram.")
             return 0

@@ -56,6 +56,7 @@ jobs:
           python telegram_bot.py --sync
 
       - name: Checar Lembretes de Gastos Fixos Previstos Hoje
+        if: always()
         run: |
           # Executa no primeiro ciclo (13h UTC = 10h BRT) ou em disparo manual
           HORA_UTC=$(date -u +%H)

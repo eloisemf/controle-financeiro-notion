@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+import time
 from typing import Any
 import requests
 
@@ -19,12 +20,21 @@ class TelegramError(RuntimeError):
 class TelegramClient:
     """Cliente para envio de mensagens e leitura de atualizações do Telegram."""
 
-    def __init__(self, token: str, chat_id: str | int | None = None, timeout_s: int = 30) -> None:
+    def __init__(
+        self,
+        token: str,
+        chat_id: str | int | None = None,
+        timeout_s: int = 30,
+        max_retries: int = 3,
+        backoff_s: float = 1.5,
+    ) -> None:
         if not token or not token.strip():
             raise ValueError("Token do bot do Telegram não pode ser vazio.")
         self._token = token.strip()
         self._default_chat_id = str(chat_id).strip() if chat_id else None
         self._timeout_s = timeout_s
+        self._max_retries = max(1, max_retries)
+        self._backoff_s = backoff_s
         self._base_url = f"{TELEGRAM_API_BASE}/bot{self._token}"
         self._file_base_url = f"{TELEGRAM_API_BASE}/file/bot{self._token}"
         self._session = requests.Session()
@@ -41,10 +51,41 @@ class TelegramClient:
     def _request(self, method: str, endpoint: str, **kwargs: Any) -> dict[str, Any]:
         url = f"{self._base_url}/{endpoint.lstrip('/')}"
         kwargs.setdefault("timeout", self._timeout_s)
-        try:
-            resp = self._session.request(method, url, **kwargs)
-        except requests.RequestException as exc:
-            raise TelegramError(f"Falha de rede ao chamar {endpoint}: {exc}") from exc
+        ultimo_erro: Exception | None = None
+
+        for tentativa in range(self._max_retries):
+            try:
+                resp = self._session.request(method, url, **kwargs)
+                if resp.status_code in (429, 500, 502, 503, 504) and tentativa + 1 < self._max_retries:
+                    espera = self._backoff_s * (2 ** tentativa)
+                    logger.warning(
+                        "HTTP %s ao chamar %s (tentativa %d/%d). Aguardando %.1fs...",
+                        resp.status_code,
+                        endpoint,
+                        tentativa + 1,
+                        self._max_retries,
+                        espera,
+                    )
+                    time.sleep(espera)
+                    continue
+                break
+            except requests.RequestException as exc:
+                ultimo_erro = exc
+                if tentativa + 1 < self._max_retries:
+                    espera = self._backoff_s * (2 ** tentativa)
+                    logger.warning(
+                        "Oscilação de rede ao chamar %s (tentativa %d/%d): %s. Aguardando %.1fs...",
+                        endpoint,
+                        tentativa + 1,
+                        self._max_retries,
+                        exc,
+                        espera,
+                    )
+                    time.sleep(espera)
+                else:
+                    raise TelegramError(f"Falha de rede ao chamar {endpoint}: {exc}") from exc
+        else:
+            raise TelegramError(f"Falha de rede ao chamar {endpoint}: {ultimo_erro}")
 
         try:
             dados = resp.json()

@@ -216,6 +216,25 @@ class TestTelegramBotServicePrevistos(unittest.TestCase):
         self.mock_telegram.enviar_mensagem.assert_called_once()
         self.assertIn("Internet Claro", self.mock_telegram.enviar_mensagem.call_args[0][0])
 
+    def test_telegram_client_retry_em_timeout_de_rede(self) -> None:
+        import requests
+        from unittest.mock import patch
+        from financas.telegram.client import TelegramClient
+
+        client = TelegramClient(token="fake:token", max_retries=3, backoff_s=0.0)
+        resp_ok = MagicMock(
+            status_code=200,
+            json=MagicMock(return_value={"ok": True, "result": [{"update_id": 10}]}),
+        )
+        with patch.object(
+            client._session,
+            "request",
+            side_effect=[requests.exceptions.ReadTimeout("Read timed out"), resp_ok],
+        ) as mock_req:
+            updates = client.obter_atualizacoes(timeout=0)
+            self.assertEqual(len(updates), 1)
+            self.assertEqual(mock_req.call_count, 2)
+
 
 if __name__ == "__main__":
     unittest.main()
