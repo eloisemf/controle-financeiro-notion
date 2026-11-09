@@ -128,28 +128,79 @@ class TelegramBotService:
 
         return processadas
 
+    def _obter_lista_categorias(self) -> list[str]:
+        """Retorna a lista ordenada de categorias do Notion (ou fallback do JSON)."""
+        try:
+            cats_notion = list(self._repos.catalogo.categorias.keys())
+            if cats_notion:
+                return sorted(cats_notion)
+        except Exception as exc:
+            logger.debug("Fallback para categorias do parser: %s", exc)
+        return self._parser.categorias_disponiveis()
+
     def _tratar_comando(self, comando: str, chat_id: str, dry_run: bool = False) -> None:
         partes_cmd = comando.split()
         cmd = partes_cmd[0].lower()
         if cmd in ("/start", "/ajuda", "/help"):
             msg_ajuda = (
                 "👋 *Olá! Sou seu assistente do Controle Financeiro.*\n\n"
-                "Para registrar uma despesa rápida, envie o *valor, item e categoria*:\n"
-                "• `5 bala lanche`\n"
-                "• `12,50 cafe lanche`\n"
-                "• `35 almoco alimentacao santander`\n"
-                "• `uber 18.90 transporte inter`\n"
-                "• `farmacia 45,90 saude debito`\n\n"
-                "⚠️ *A categoria é obrigatória* para manter seu controle preciso!\n"
-                "Se não informar a categoria, eu te aviso para reenviar.\n\n"
-                "📸 Você também pode me mandar *prints de faturas ou PDFs* que eu leio e concilio!\n\n"
-                "Comandos úteis:\n"
-                "/resumo — Exibe o relatório de gastos, saldo livre e faturas\n"
-                "/investimentos — Atualiza cotações e mostra seu patrimônio\n"
-                "/confirmar [nome] — Confirma um gasto previsto como Realizado\n"
-                "/ajuda — Exibe esta mensagem de ajuda"
+                "Para lançar sem erros, usamos *2 formatos combinados* (não precisa colocar acento!):\n\n"
+                "1️⃣ *Atalho Rápido (separado por `;`):*\n"
+                "`Item ; Valor ; Categoria`\n"
+                "• `filtro de cafe ; 20 ; casa`\n"
+                "• `almoco ; 35,90 ; alimentacao ; debito`\n"
+                "• `remedio ; 45 ; saude ; inter ; essencial`\n\n"
+                "2️⃣ *Modelo Copiar & Colar (digite /modelo):*\n"
+                "```text\n"
+                "Item: filtro de café\n"
+                "Valor: 20\n"
+                "Categoria: Casa\n"
+                "Conta: Santander Credito\n"
+                "```\n"
+                "ℹ️ *Padrões automáticos:* Conta = `Santader Credito` | Uso = `Nao essencial`.\n\n"
+                "📸 Você também pode mandar *prints de faturas ou PDFs*!\n\n"
+                "📌 *Comandos disponíveis:*\n"
+                "/categorias — Lista todas as categorias e contas aceitas\n"
+                "/modelo — Envia o molde pronto para copiar e colar\n"
+                "/resumo — Relatório de gastos, saldo livre e faturas\n"
+                "/investimentos — Atualiza cotações e mostra patrimônio\n"
+                "/confirmar [nome] — Confirma gasto fixo previsto como Realizado\n"
+                "/ajuda — Exibe esta mensagem"
             )
             self._telegram.enviar_mensagem(msg_ajuda, chat_id=chat_id)
+
+        elif cmd in ("/categorias", "/categoria", "/contas"):
+            cats = self._obter_lista_categorias()
+            linhas_cat = "\n".join(f"• `{c}`" for c in cats)
+            msg_cats = (
+                "📂 *CATEGORIAS DISPONÍVEIS NO NOTION*\n"
+                "*(Você pode digitar sem acento e em minúsculas!)*\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"{linhas_cat}\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "💳 *CONTAS / CARTÕES ACEITOS:*\n"
+                "• `santander` *(padrão: Santader Credito)*\n"
+                "• `debito` ou `pix` *(Santader Conta)*\n"
+                "• `inter` *(Inter Credito)* | `inter conta`\n"
+                "• `bradesco` *(Bradesco Credito)* | `bradesco conta`\n"
+                "• `amazon` *(Amazon bradescard)*\n\n"
+                "🎯 *USO DO DINHEIRO:*\n"
+                "• Padrão automático: `Nao essencial`\n"
+                "• Para forçar essencial, adicione `; essencial` no fim."
+            )
+            self._telegram.enviar_mensagem(msg_cats, chat_id=chat_id)
+
+        elif cmd in ("/modelo", "/template"):
+            msg_modelo = (
+                "📋 *MODELO PARA COPIAR E COLAR:*\n\n"
+                "`Item: `\n"
+                "`Valor: `\n"
+                "`Categoria: `\n"
+                "`Conta/Cartão: Santander Credito`\n\n"
+                "⚡ *OU ATALHO DE 1 LINHA (com `;`):*\n"
+                "`filtro de cafe ; 20 ; casa`"
+            )
+            self._telegram.enviar_mensagem(msg_modelo, chat_id=chat_id)
 
         elif cmd in ("/confirmar", "/confirmado", "/pago"):
             if len(partes_cmd) < 2:
@@ -188,12 +239,12 @@ class TelegramBotService:
 
         else:
             self._telegram.enviar_mensagem(
-                "❓ Comando não reconhecido. Digite /ajuda para ver as instruções.",
+                "❓ Comando não reconhecido. Digite /ajuda ou /categorias para ver as opções.",
                 chat_id=chat_id,
             )
 
     def _tratar_callback(self, cb_id: str, data: str, chat_id: str, dry_run: bool = False) -> None:
-        """Trata cliques em botões inline (ex: confirmar gasto fixo previsto)."""
+        """Trata cliques em botões inline (confirmar gasto fixo ou excluir lançamento)."""
         if data.startswith("confirmar:"):
             page_id = data.split(":", maxsplit=1)[1]
             if not dry_run:
@@ -201,6 +252,15 @@ class TelegramBotService:
             self._telegram.responder_callback_query(cb_id, texto="Status alterado para Realizado!")
             self._telegram.enviar_mensagem(
                 "✅ *Gasto Fixo Confirmado!*\nO status foi alterado para *Realizado* com sucesso no seu Notion.",
+                chat_id=chat_id,
+            )
+        elif data.startswith("excluir:"):
+            page_id = data.split(":", maxsplit=1)[1]
+            if not dry_run:
+                self._repos.transacoes.excluir_lancamento(page_id)
+            self._telegram.responder_callback_query(cb_id, texto="Lançamento excluído do Notion!")
+            self._telegram.enviar_mensagem(
+                "🗑️ *Lançamento Excluído!*\nA despesa foi movida para a lixeira do Notion com sucesso.",
                 chat_id=chat_id,
             )
         else:
@@ -236,46 +296,69 @@ class TelegramBotService:
         gasto = self._parser.parse_mensagem(texto)
         if not gasto:
             self._telegram.enviar_mensagem(
-                "⚠️ Não entendi o valor ou formato do gasto. Envie no formato:\n"
-                "• `15 cafezinho lanche` ou `uber 20 transporte inter` ou `bala 5 lanche`",
+                "⚠️ *Formato não reconhecido.*\n\n"
+                "Para evitar erros no nome do item, envie em um dos *2 formatos combinados*:\n\n"
+                "1️⃣ *Separado por ponto-e-vírgula (`;`):*\n"
+                "• `filtro de cafe ; 20 ; casa`\n"
+                "• `almoco ; 35,90 ; alimentacao ; debito`\n\n"
+                "2️⃣ *Modelo Dicionário (ou digite /modelo):*\n"
+                "`Item: filtro de cafe`\n"
+                "`Valor: 20`\n"
+                "`Categoria: casa`",
                 chat_id=chat_id,
             )
             return
 
+        # Tenta validar também no catálogo do Notion caso seja uma categoria nova criada lá
+        if not gasto.categoria and gasto.categoria_informada:
+            try:
+                cat_id = self._repos.catalogo.id_categoria(gasto.categoria_informada)
+                nome_oficial = self._repos.catalogo.nome_categoria_por_id(cat_id)
+                if nome_oficial:
+                    gasto = gasto._replace(categoria=nome_oficial, incerto=False)
+            except KeyError:
+                pass
+
         if not gasto.categoria:
+            detalhe = (
+                f"Não reconheci a categoria `'{gasto.categoria_informada}'`.\n\n"
+                if gasto.categoria_informada
+                else "Você esqueceu de informar a categoria!\n\n"
+            )
             msg_alerta = (
                 "⚠️ *Categoria obrigatória!*\n\n"
-                "Para manter seu controle organizado, informe a categoria junto com o valor.\n\n"
-                "💡 *Exemplos:*\n"
-                "• `5 bala lanche`\n"
-                "• `15 cafezinho lanche`\n"
-                "• `uber 20 transporte privado inter`\n"
-                "• `farmacia 45 saude debito`\n\n"
-                "📌 *Categorias disponíveis:*\n"
-                "• *Lanche, Alimentação, Saúde, Beleza, Roupa*\n"
-                "• *Transporte Privado, Transporte Público, Lazer, Livro*\n"
-                "• *Cursos, Casa, Utilidade, Academia, Viagem, Eletronicos*"
+                f"{detalhe}"
+                "💡 *Exemplo correto:*\n"
+                f"• `{gasto.descricao} ; {gasto.valor} ; casa`\n\n"
+                "👉 Digite /categorias para ver a lista completa (não precisa usar acentos)."
             )
             self._telegram.enviar_mensagem(msg_alerta, chat_id=chat_id)
             return
 
         lancamento = self._parser.criar_lancamento(gasto)
 
+        page_id = "dry-run-id"
         if not dry_run:
-            self._repos.transacoes.criar_lancamento(lancamento)
+            page_id = self._repos.transacoes.criar_lancamento(lancamento)
 
         val_fmt = f"R$ {lancamento.valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        nome_exibicao = lancamento.nome_fantasia or lancamento.descricao
         msg_confirmacao = (
             "✅ *Despesa Registrada no Notion!*\n"
             "━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"• *Item:* {lancamento.descricao}\n"
+            f"• *Item (Nome Fantasia):* {nome_exibicao}\n"
             f"• *Valor:* *{val_fmt}*\n"
             f"• *Conta/Cartão:* {lancamento.conta_ou_cartao}\n"
             f"• *Categoria:* {lancamento.categoria} ({lancamento.uso_dinheiro})\n"
             f"• *Mês Competência:* {lancamento.mes_competencia}\n"
             "━━━━━━━━━━━━━━━━━━━━━━"
         )
-        self._telegram.enviar_mensagem(msg_confirmacao, chat_id=chat_id)
+        botoes = {
+            "inline_keyboard": [
+                [{"text": "🗑️ Desfazer / Excluir Lançamento", "callback_data": f"excluir:{page_id}"}]
+            ]
+        }
+        self._telegram.enviar_mensagem(msg_confirmacao, chat_id=chat_id, reply_markup=botoes)
 
     def _tratar_anexo(self, msg: dict[str, Any], chat_id: str, dry_run: bool = False) -> None:
         self._telegram.enviar_mensagem("📥 Recebi seu arquivo! Processando e conciliando...", chat_id=chat_id)

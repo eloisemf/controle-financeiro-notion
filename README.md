@@ -43,20 +43,32 @@ O sistema orquestra desde o registro de despesas rápidas via mensagem no Telegr
 
 O bot (`@gastos_elobot`) é seu canal direto para registrar gastos diários sem precisar abrir o Notion:
 
-### 1. Lançamento Manual de Despesas
-Basta mandar uma mensagem de texto simples. A ordem dos elementos é livre, mas a **categoria é obrigatória**:
+### 1. Lançamento Manual de Despesas (Sem Adivinhação)
+Para garantir que o nome do item nunca seja alterado, o bot aceita **2 formatos estruturados** (totalmente tolerantes à falta de acentos e maiúsculas/minúsculas):
 
-| Mensagem | Valor | Item | Conta / Cartão | Categoria |
-| :--- | :--- | :--- | :--- | :--- |
-| `5 bala lanche` | R$ 5,00 | bala | *Santader Credito (padrão)* | Lanche |
-| `15 cafezinho lanche` | R$ 15,00 | cafezinho | *Santader Credito* | Lanche |
-| `uber 22,50 transporte inter` | R$ 22,50 | uber | Inter Credito | Transporte Privado |
-| `farmacia 45,90 saude debito` | R$ 45,90 | farmacia | Santader Conta | Saúde |
-| `35 almoço alimentacao pix` | R$ 35,00 | almoço | Santader Conta | Alimentação |
+#### Opção A: Atalho Rápido de 1 Linha (separado por `;`)
+Formato: `Item ; Valor ; Categoria [; Conta] [; Uso]`
+
+| Mensagem | Item | Valor | Categoria | Conta / Cartão | Uso |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `filtro de cafe ; 20 ; casa` | filtro de cafe | R$ 20,00 | Casa | *Santader Credito (padrão)* | *Nao essencial (padrão)* |
+| `almoco ; 35,90 ; alimentacao ; debito` | almoco | R$ 35,90 | Alimentação | Santader Conta | *Nao essencial* |
+| `uber ; 22,50 ; transporte ; inter` | uber | R$ 22,50 | Transporte Privado | Inter Credito | *Nao essencial* |
+| `remedio ; 45,90 ; saude ; debito ; essencial` | remedio | R$ 45,90 | Saúde | Santader Conta | Essencial |
+
+#### Opção B: Modelo Copiar & Colar (`/modelo`)
+```text
+Item: filtro de café
+Valor: 20
+Categoria: casa
+Conta: santander credito
+```
 
 > [!IMPORTANT]
-> **Validação de Categoria Obrigatória:**  
-> Se você mandar apenas `5 bala` sem a categoria, o bot rejeita o lançamento no Notion e responde orientando como mandar (`5 bala lanche`), exibindo as categorias aceitas.
+> **Regras Pré-Acordadas:**  
+> 1. **Categoria Obrigatória:** Se a categoria não for informada ou não existir, o bot avisa e orienta a consultar `/categorias`.  
+> 2. **Padrão `Nao essencial`:** Todos os gastos avulsos entram por padrão como `Nao essencial` (já que os essenciais estão nos Gastos Fixos). Para forçar essencial, basta adicionar `; essencial` ou `Uso: essencial`.  
+> 3. **Botão `[🗑️ Desfazer / Excluir]`:** Toda confirmação de gasto traz um botão inline para apagar o registro do Notion com 1 toque caso tenha digitado algo errado.
 
 ### 2. Leitura de Faturas e Comprovantes
 * Envie fotos, prints de tela de aplicativos de bancos ou arquivos PDF de faturas diretamente no chat.
@@ -72,6 +84,8 @@ Basta mandar uma mensagem de texto simples. A ordem dos elementos é livre, mas 
 * Você pode confirmar clicando no botão **`[✅ Confirmar Aluguel]`** na própria mensagem ou respondendo `/confirmar Aluguel`. O status no Notion muda na hora de `Previsto` para `Realizado`.
 
 ### 4. Comandos do Bot
+* `/categorias` — Lista todas as categorias do Notion e apelidos de contas aceitos.
+* `/modelo` — Envia o template pronto para copiar e colar.
 * `/resumo` — Gera o relatório completo da semana (saldo livre, faturas dos cartões, gastos fixos da semana e patrimônio).
 * `/investimentos` — Atualiza as cotações de mercado e exibe o painel de patrimônio e rentabilidade.
 * `/confirmar <nome>` — Confirma manualmente um gasto fixo previsto.

@@ -214,6 +214,17 @@ class TransacoesRepository(BaseNotionRepository):
             properties={ColunasTransacoes.STATUS: Prop.select(StatusTransacao.REALIZADO.value)},
         )
 
+    def excluir_lancamento(self, transacao_page_id: str) -> None:
+        """Move um lançamento para a lixeira (archived=True) no Notion."""
+        self._client.delete_page(transacao_page_id)
+
+    def preencher_nome_fatura(self, transacao_page_id: str, nome_fatura: str) -> None:
+        """Preenche a coluna `Name` (nome oficial na fatura) mantendo `Nome Fantasia` e `Categoria` intactos."""
+        self._client.update_page(
+            page_id=transacao_page_id,
+            properties={ColunasTransacoes.NOME: Prop.title(nome_fatura)},
+        )
+
     def buscar_previstos_para_data(self, data_referencia: date) -> list[dict[str, Any]]:
         """Busca todas as transações com Status='Previsto' agendadas para uma data específica."""
         filtro = {
@@ -228,7 +239,7 @@ class TransacoesRepository(BaseNotionRepository):
                 },
             ]
         }
-        paginas = self._client.query_database_all(self._database_id, filter_payload=filtro)
+        paginas = self._client.query_database(self._database_id, filter_payload=filtro)
         itens: list[dict[str, Any]] = []
         for p in paginas:
             nome = NotionParser.page_title(p)
@@ -239,7 +250,7 @@ class TransacoesRepository(BaseNotionRepository):
             )
             nome_conta = "Conta/Cartão"
             if contas:
-                nome_conta = self._catalogo.nome_conta(contas[0])
+                nome_conta = self._catalogo.nome_conta_por_id(contas[0]) or "Conta/Cartão"
             itens.append({
                 "page_id": NotionParser.normalize_id(p["id"]),
                 "descricao": nome,
@@ -256,7 +267,7 @@ class TransacoesRepository(BaseNotionRepository):
             "property": ColunasTransacoes.STATUS,
             "select": {"equals": StatusTransacao.PREVISTO.value},
         }
-        paginas = self._client.query_database_all(self._database_id, filter_payload=filtro)
+        paginas = self._client.query_database(self._database_id, filter_payload=filtro)
         for p in paginas:
             nome = NotionParser.page_title(p)
             if termo_norm in normalizar_texto_chave(nome):
@@ -325,6 +336,8 @@ class TransacoesRepository(BaseNotionRepository):
             ColunasTransacoes.STATUS: Prop.select(lancamento.status.value),
             ColunasTransacoes.MES: Prop.relation(mes_id),
         }
+        if lancamento.nome_fantasia:
+            props[ColunasTransacoes.NOME_FANTASIA] = Prop.rich_text(lancamento.nome_fantasia)
         if lancamento.categoria:
             cat_id = self._catalogo.id_categoria(lancamento.categoria)
             props[ColunasTransacoes.CATEGORIA] = Prop.relation(cat_id)

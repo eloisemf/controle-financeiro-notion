@@ -3,9 +3,15 @@
 from __future__ import annotations
 
 import logging
+import re
 
 from financas.config import NotionDatabaseIds
-from financas.domain.models import DEFAULT_CARTOES, CartaoConfig, RegraFechamento
+from financas.domain.models import (
+    DEFAULT_CARTOES,
+    CartaoConfig,
+    RegraFechamento,
+    normalizar_texto_chave,
+)
 from financas.notion.builders import NotionParser
 from financas.notion.client import NotionClient
 from financas.notion.repositories.base import BaseNotionRepository
@@ -33,9 +39,18 @@ class CatalogoRepository(BaseNotionRepository):
     def _buscar_id(self, chave_catalogo: str, database_id: str, nome: str, label_erro: str) -> str:
         mapa, _ = self._obter_mapas(chave_catalogo, database_id)
         chave = nome.strip()
-        if chave not in mapa:
-            raise KeyError(f"{label_erro} não encontrado(a) no Notion: '{chave}'")
-        return mapa[chave]
+        if chave in mapa:
+            return mapa[chave]
+
+        # Fallback insensível a acentos, emojis e maiúsculas/minúsculas
+        chave_limpa = re.sub(r"[^a-z0-9\s]", "", normalizar_texto_chave(chave)).strip()
+        if chave_limpa:
+            for k, page_id in mapa.items():
+                k_limpa = re.sub(r"[^a-z0-9\s]", "", normalizar_texto_chave(k)).strip()
+                if k_limpa == chave_limpa:
+                    return page_id
+
+        raise KeyError(f"{label_erro} não encontrado(a) no Notion: '{chave}'")
 
     def _buscar_nome(self, chave_catalogo: str, database_id: str, page_id: str) -> str:
         _, reverso = self._obter_mapas(chave_catalogo, database_id)

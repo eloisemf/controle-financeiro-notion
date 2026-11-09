@@ -1,4 +1,18 @@
-"""Parser inteligente para mensagens manuais de gastos e comandos no Telegram."""
+"""Parser determinístico para mensagens manuais de gastos no Telegram.
+
+Formatos pré-acordados (sem adivinhação destrutiva no nome do item):
+1. Dicionário / Template (Chave: Valor em múltiplas linhas):
+   • Item: filtro de café
+   • Valor: 20
+   • Categoria: Casa
+   • Conta/Cartão: Santander Credito (opcional, padrão = Santader Credito)
+   • Uso: Nao essencial (opcional, padrão = Nao essencial)
+   • Mês Competência: 2026-Novembro (opcional, calculado automaticamente)
+
+2. Atalho Rápido de 1 linha separado por `;` (ou `|`):
+   Item ; Valor ; Categoria [; Conta] [; Uso]
+   Ex: `filtro de café ; 20 ; casa`
+"""
 
 from __future__ import annotations
 
@@ -29,6 +43,12 @@ ARQUIVO_REGRAS_TELEGRAM = Path(__file__).resolve().parents[2] / "regras_telegram
 ARQUIVO_REGRAS_TELEGRAM_EXAMPLE = Path(__file__).resolve().parents[2] / "regras_telegram.example.json"
 
 
+def _limpar_chave_busca(texto: str) -> str:
+    """Remove acentos, pontuação/emojis e normaliza espaços em minúsculas."""
+    norm = normalizar_texto_chave(texto)
+    return re.sub(r"[^a-z0-9\s]", " ", norm).strip()
+
+
 def carregar_regras_telegram(
     caminho: Path | str | None = None,
 ) -> tuple[tuple[tuple[str, str], ...], tuple[tuple[str, str], ...]]:
@@ -50,14 +70,14 @@ def carregar_regras_telegram(
                 m_contas = conteudo.get("contas", {})
                 if isinstance(m_contas, dict):
                     contas = [
-                        (normalizar_texto_chave(k), str(v).strip())
+                        (_limpar_chave_busca(k), str(v).strip())
                         for k, v in m_contas.items()
                         if k and v
                     ]
                 m_cats = conteudo.get("categorias", {})
                 if isinstance(m_cats, dict):
                     categorias = [
-                        (normalizar_texto_chave(k), str(v).strip())
+                        (_limpar_chave_busca(k), str(v).strip())
                         for k, v in m_cats.items()
                         if k and v
                     ]
@@ -70,7 +90,7 @@ def carregar_regras_telegram(
 
 
 class GastoManualExtraido(NamedTuple):
-    """Dados brutos extraídos de uma mensagem de texto simples."""
+    """Dados estruturados extraídos de uma mensagem do Telegram."""
 
     descricao: str
     valor: Decimal
@@ -78,19 +98,25 @@ class GastoManualExtraido(NamedTuple):
     categoria: str | None
     uso_dinheiro: str
     incerto: bool
+    mes_competencia: str | None = None
+    categoria_informada: str | None = None
 
 
 class MensagemGastoParser:
-    """Extrai lançamentos de despesas a partir de texto livre informal do Telegram."""
+    """Extrai lançamentos de despesas a partir do template Chave: Valor ou atalho com `;`."""
 
-    # Padrão para valores monetários: "5", "5.00", "12,50", "R$ 45,90"
-    _RE_VALOR = re.compile(
+    _RE_VALOR_EXATO = re.compile(
+        r"^\s*(?:R\$\s*)?(\d{1,6}(?:[,\.]\d{1,2})?)\s*$",
+        re.IGNORECASE,
+    )
+    _RE_VALOR_BUSCA = re.compile(
         r"(?i)(?:R\$\s*)?(\d{1,6}(?:[,\.]\d{1,2})?)(?!\S)",
     )
 
     def __init__(
         self,
         conta_padrao: str = "Santader Credito",
+        uso_padrao: str = UsoDinheiro.NAO_ESSENCIAL.value,
         classificador: ClassificadorCategoria | None = None,
         calculadora: CalculadoraFatura | None = None,
         cartoes: dict[str, CartaoConfig] | None = None,
@@ -98,6 +124,7 @@ class MensagemGastoParser:
         regras_categorias: tuple[tuple[str, str], ...] | None = None,
     ) -> None:
         self.conta_padrao = conta_padrao
+        self.uso_padrao = uso_padrao
         self._classificador = classificador or ClassificadorCategoria()
         self._calc = calculadora or CalculadoraFatura()
         self._cartoes = cartoes or {}
@@ -110,102 +137,257 @@ class MensagemGastoParser:
             )
         else:
             self._regras_contas = tuple(
-                sorted(regras_contas, key=lambda r: len(r[0]), reverse=True)
+                sorted(
+                    ((_limpar_chave_busca(k), v) for k, v in regras_contas),
+                    key=lambda r: len(r[0]),
+                    reverse=True,
+                )
             )
             self._regras_categorias = tuple(
-                sorted(regras_categorias, key=lambda r: len(r[0]), reverse=True)
+                sorted(
+                    ((_limpar_chave_busca(k), v) for k, v in regras_categorias),
+                    key=lambda r: len(r[0]),
+                    reverse=True,
+                )
             )
 
-    def _identificar_conta(self, texto: str) -> tuple[str, str]:
-        """Identifica se uma conta/cartão foi mencionada no texto e a remove da descrição."""
-        texto_norm = normalizar_texto_chave(texto)
-        for termo, nome_oficial in self._regras_contas:
-            padrao = rf"\b{re.escape(termo)}\b"
-            if re.search(padrao, texto_norm):
-                texto_limpo = re.sub(padrao, "", texto, flags=re.IGNORECASE).strip()
-                texto_limpo = re.sub(r"\s+", " ", texto_limpo).strip(" -:,")
-                return nome_oficial, texto_limpo
+        self._mapa_contas: dict[str, str] = {}
+        for termo, oficial in self._regras_contas:
+            self._mapa_contas[termo] = oficial
+            self._mapa_contas[_limpar_chave_busca(oficial)] = oficial
 
-        return self.conta_padrao, texto.strip()
+        self._mapa_categorias: dict[str, str] = {}
+        for termo, oficial in self._regras_categorias:
+            self._mapa_categorias[termo] = oficial
+            self._mapa_categorias[_limpar_chave_busca(oficial)] = oficial
 
-    def _identificar_categoria(self, texto: str) -> tuple[str | None, str]:
-        """Extrai a categoria mencionada explicitamente no texto ou infere via regras do JSON.
+    def categorias_disponiveis(self) -> list[str]:
+        """Retorna a lista única e ordenada de categorias oficiais configuradas."""
+        return sorted({oficial for _, oficial in self._regras_categorias})
 
-        Retorna `(categoria_oficial_ou_none, texto_sem_categoria)`.
-        """
-        texto_norm = normalizar_texto_chave(texto)
+    def contas_disponiveis(self) -> list[str]:
+        """Retorna a lista única e ordenada de contas/cartões oficiais configurados."""
+        return sorted({oficial for _, oficial in self._regras_contas})
 
-        for termo, nome_cat in self._regras_categorias:
-            termo_norm = normalizar_texto_chave(termo)
-            padrao = rf"\b{re.escape(termo_norm)}\b"
-            if re.search(padrao, texto_norm):
-                # Se o texto for exatamente a palavra da categoria (ex: "cafe" ou "uber"), mantém a descrição
-                if texto_norm == termo_norm:
-                    return nome_cat, texto.strip()
-                # Caso contrário, remove a categoria da descrição para deixá-la limpa
-                texto_limpo = re.sub(padrao, "", texto, flags=re.IGNORECASE).strip()
-                texto_limpo = re.sub(r"\s+", " ", texto_limpo).strip(" -:,")
-                return nome_cat, texto_limpo or texto.strip()
-
-        # Fallback para o classificador baseado em regras de JSON
-        cat_classif, incerto = self._classificador.classificar_descricao(texto)
-        if not incerto and cat_classif != "Diversos":
-            return cat_classif, texto.strip()
-
-        # Não foi informada categoria válida e o classificador ficou incerto
-        return None, texto.strip()
-
-    def parse_mensagem(self, texto: str) -> GastoManualExtraido | None:
-        """Tenta extrair um gasto a partir de uma mensagem de texto simples.
-
-        Exemplos suportados:
-        - "5 bala lanche"
-        - "15 cafezinho lanche"
-        - "uber 22,50 transporte inter"
-        - "49,90 farmacia saude debito"
-        """
-        linha = texto.strip()
-        if not linha or linha.startswith("/"):
+    def _extrair_decimal(self, texto: str) -> Decimal | None:
+        """Converte string monetária ('20', '15,50', 'R$ 45.90') em Decimal positivo."""
+        limpo = texto.strip()
+        if not limpo:
             return None
-
-        # 1. Localizar o valor monetário
-        match_valor = self._RE_VALOR.search(linha)
-        if not match_valor:
+        m = self._RE_VALOR_EXATO.match(limpo) or self._RE_VALOR_BUSCA.search(limpo)
+        if not m:
             return None
-
-        valor_str = match_valor.group(1).replace(",", ".")
         try:
-            valor = para_decimal(Decimal(valor_str))
-            if valor is None or valor <= Decimal("0.00"):
-                return None
+            val = para_decimal(m.group(1))
+            if val is not None and val > Decimal("0.00"):
+                return val
         except Exception:
             return None
+        return None
 
-        # 2. Separar a descrição sem o número do valor
-        inicio, fim = match_valor.span()
-        texto_sem_valor = (linha[:inicio] + " " + linha[fim:]).strip()
-        texto_sem_valor = re.sub(r"\s+", " ", texto_sem_valor).strip(" -:,")
+    def resolver_categoria(self, texto_cat: str | None) -> str | None:
+        """Resolve o nome oficial da categoria ignorando acentos e maiúsculas/minúsculas."""
+        if not texto_cat or not texto_cat.strip():
+            return None
+        chave = _limpar_chave_busca(texto_cat)
+        if not chave:
+            return None
+        if chave in self._mapa_categorias:
+            return self._mapa_categorias[chave]
 
-        if not texto_sem_valor:
+        # Busca por palavra inteira dentro das regras (ex: "categoria casa" -> "Casa")
+        for termo, oficial in self._regras_categorias:
+            if re.search(rf"\b{re.escape(termo)}\b", chave):
+                return oficial
+        return None
+
+    def resolver_conta(self, texto_conta: str | None) -> str:
+        """Resolve o nome oficial da conta/cartão ignorando acentos (padrão = conta_padrao)."""
+        if not texto_conta or not texto_conta.strip():
+            return self.conta_padrao
+        chave = _limpar_chave_busca(texto_conta)
+        if not chave:
+            return self.conta_padrao
+        if chave in self._mapa_contas:
+            return self._mapa_contas[chave]
+
+        for termo, oficial in self._regras_contas:
+            if re.search(rf"\b{re.escape(termo)}\b", chave):
+                return oficial
+        return self.conta_padrao
+
+    def _eh_uso_explicito(self, texto: str) -> str | None:
+        """Verifica se um campo corresponde explicitamente a um tipo de Uso do Dinheiro."""
+        chave = _limpar_chave_busca(texto)
+        if chave in ("nao essencial", "nao", "livre", "variavel", "supérfluo", "superfluo"):
+            return UsoDinheiro.NAO_ESSENCIAL.value
+        if chave in ("essencial", "fixo", "obrigatorio"):
+            return UsoDinheiro.ESSENCIAL.value
+        if chave in ("emprestimo", "reembolso", "terceiro"):
+            return UsoDinheiro.EMPRESTIMO.value
+        if chave in ("investimento", "aporte", "guardar dinheiro"):
+            return UsoDinheiro.INVESTIMENTO.value
+        return None
+
+    def resolver_uso(self, texto_uso: str | None) -> str:
+        """Resolve o Uso do Dinheiro (padrão estrito = Nao essencial)."""
+        if not texto_uso or not texto_uso.strip():
+            return self.uso_padrao
+        explicito = self._eh_uso_explicito(texto_uso)
+        return explicito if explicito is not None else self.uso_padrao
+
+    def _parse_formato_dicionario(self, texto: str) -> GastoManualExtraido | None:
+        """Lê mensagens no formato de dicionário (Chave: Valor em linhas)."""
+        campos: dict[str, str] = {}
+        linhas_validas = 0
+
+        for linha in texto.splitlines():
+            limpa = re.sub(r"^[\s•\-\*▪️▸👉]+", "", linha).strip()
+            if not limpa or ":" not in limpa:
+                continue
+            chave_bruta, valor_bruto = limpa.split(":", maxsplit=1)
+            chave_norm = _limpar_chave_busca(chave_bruta)
+            if not chave_norm:
+                continue
+            campos[chave_norm] = valor_bruto.strip()
+            linhas_validas += 1
+
+        if linhas_validas == 0:
             return None
 
-        # 3. Identificar conta ou cartão mencionado
-        conta, texto_sem_conta = self._identificar_conta(texto_sem_valor)
+        descricao = (
+            campos.get("item")
+            or campos.get("descricao")
+            or campos.get("nome")
+            or campos.get("produto")
+            or ""
+        ).strip()
 
-        # 4. Identificar e extrair categoria
-        categoria, descricao_final = self._identificar_categoria(texto_sem_conta)
+        valor_str = (
+            campos.get("valor")
+            or campos.get("preco")
+            or campos.get("total")
+            or ""
+        ).strip()
+        valor = self._extrair_decimal(valor_str)
 
-        incerto = categoria is None
-        uso = UsoDinheiro.por_incerteza(incerto)
+        if not descricao or valor is None:
+            return None
+
+        cat_bruta = (
+            campos.get("categoria")
+            or campos.get("cat")
+            or ""
+        ).strip()
+        # Remove sufixo entre parênteses caso a pessoa tenha copiado "Casa (Nao essencial)"
+        cat_sem_parenteses = re.sub(r"\(.*?\)", "", cat_bruta).strip()
+        categoria = self.resolver_categoria(cat_sem_parenteses)
+
+        conta_bruta = (
+            campos.get("conta cartao")
+            or campos.get("conta")
+            or campos.get("cartao")
+            or campos.get("pagamento")
+            or ""
+        ).strip()
+        conta = self.resolver_conta(conta_bruta)
+
+        uso_bruto = (
+            campos.get("uso")
+            or campos.get("uso do dinheiro")
+            or campos.get("tipo")
+            or ""
+        ).strip()
+        uso = self.resolver_uso(uso_bruto)
+
+        mes_bruto = (
+            campos.get("mes competencia")
+            or campos.get("mes")
+            or campos.get("competencia")
+            or ""
+        ).strip()
+        mes_comp = mes_bruto if mes_bruto else None
 
         return GastoManualExtraido(
-            descricao=descricao_final.strip() or "Despesa avulsa",
+            descricao=descricao,
             valor=valor,
             conta_ou_cartao=conta,
             categoria=categoria,
             uso_dinheiro=uso,
-            incerto=incerto,
+            incerto=categoria is None,
+            mes_competencia=mes_comp,
+            categoria_informada=cat_sem_parenteses or None,
         )
+
+    def _parse_formato_separador(self, texto: str) -> GastoManualExtraido | None:
+        """Lê mensagens de 1 linha separadas por `;` ou `|`.
+
+        Formato: `Item ; Valor ; Categoria [; Conta] [; Uso]`
+        (também aceita `Valor ; Item ; Categoria`).
+        """
+        partes = [p.strip() for p in re.split(r"[;|]", texto) if p.strip()]
+        if len(partes) < 2:
+            return None
+
+        # Detecta em qual das 2 primeiras posições está o valor monetário exato
+        val_0 = self._extrair_decimal(partes[0]) if self._RE_VALOR_EXATO.match(partes[0]) else None
+        val_1 = self._extrair_decimal(partes[1])
+
+        if val_1 is not None and not self._RE_VALOR_EXATO.match(partes[0]):
+            descricao = partes[0].strip()
+            valor = val_1
+        elif val_0 is not None:
+            valor = val_0
+            descricao = partes[1].strip()
+        else:
+            return None
+
+        if not descricao or valor is None:
+            return None
+
+        cat_bruta = partes[2].strip() if len(partes) >= 3 else ""
+        categoria = self.resolver_categoria(cat_bruta) if cat_bruta else None
+
+        conta = self.conta_padrao
+        uso = self.uso_padrao
+
+        for extra in partes[3:]:
+            uso_teste = self._eh_uso_explicito(extra)
+            if uso_teste is not None:
+                uso = uso_teste
+            else:
+                conta = self.resolver_conta(extra)
+
+        return GastoManualExtraido(
+            descricao=descricao,
+            valor=valor,
+            conta_ou_cartao=conta,
+            categoria=categoria,
+            uso_dinheiro=uso,
+            incerto=categoria is None,
+            mes_competencia=None,
+            categoria_informada=cat_bruta or None,
+        )
+
+    def parse_mensagem(self, texto: str) -> GastoManualExtraido | None:
+        """Extrai um gasto a partir dos formatos estruturados pré-acordados.
+
+        1. Formato Dicionário (`Item: ... / Valor: ... / Categoria: ...`)
+        2. Formato Separador (`Item ; Valor ; Categoria [; Conta] [; Uso]`)
+        """
+        limpo = texto.strip()
+        if not limpo or limpo.startswith("/"):
+            return None
+
+        if ":" in limpo and ("\n" in limpo or limpo.lower().startswith(("item:", "• item:"))):
+            resultado_dict = self._parse_formato_dicionario(limpo)
+            if resultado_dict is not None:
+                return resultado_dict
+
+        if ";" in limpo or "|" in limpo:
+            return self._parse_formato_separador(limpo)
+
+        return None
 
     def criar_lancamento(
         self,
@@ -214,18 +396,22 @@ class MensagemGastoParser:
     ) -> LancamentoTransacao:
         """Converte o gasto extraído em uma entidade LancamentoTransacao pronta para o Notion."""
         if not gasto.categoria:
-            raise ValueError("Categoria obrigatória não informada.")
+            raise ValueError("Categoria obrigatória não informada ou não reconhecida.")
 
         hoje = data_referencia or date.today()
-        cartao = self._cartoes.get(gasto.conta_ou_cartao)
-        if cartao and cartao.ativo:
-            ano_c, mes_c = self._calc.competencia_fatura(cartao, hoje)
-            mes_comp = formatar_mes_competencia(ano_c, mes_c)
+        if gasto.mes_competencia:
+            mes_comp = gasto.mes_competencia
         else:
-            mes_comp = formatar_mes_competencia(hoje.year, hoje.month)
+            cartao = self._cartoes.get(gasto.conta_ou_cartao)
+            if cartao and cartao.ativo:
+                ano_c, mes_c = self._calc.competencia_fatura(cartao, hoje)
+                mes_comp = formatar_mes_competencia(ano_c, mes_c)
+            else:
+                mes_comp = formatar_mes_competencia(hoje.year, hoje.month)
 
         return LancamentoTransacao(
-            descricao=gasto.descricao,
+            descricao="",
+            nome_fantasia=gasto.descricao,
             valor=gasto.valor,
             data_compra=hoje,
             mes_competencia=mes_comp,

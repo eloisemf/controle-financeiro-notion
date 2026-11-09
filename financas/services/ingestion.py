@@ -323,6 +323,24 @@ class FaturaIngestionService:
             relatorio.ignorados_por_idempotencia.append(resumo_item)
             return True
 
+        # Conciliação com lançamento manual do Telegram (onde Name="" e Nome Fantasia já foi preenchido)
+        chave_sem_nome = ChaveIdempotencia(
+            "",
+            chave.centavos,
+            chave.mes_competencia,
+            chave.conta_norm,
+            chave.data_iso,
+        )
+        if chave_sem_nome in chaves_mes:
+            page_id_manual = chaves_mes.pop(chave_sem_nome)
+            if not dry_run:
+                self._repos.transacoes.preencher_nome_fatura(
+                    page_id_manual, item.descricao_com_parcela
+                )
+            chaves_mes[chave] = page_id_manual
+            relatorio.conciliados_previsto_para_realizado.append(resumo_item)
+            return True
+
         if chave_parcial in orfas:
             page_id_orfa = orfas.pop(chave_parcial)
             if not dry_run:

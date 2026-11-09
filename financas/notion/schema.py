@@ -5,6 +5,7 @@ from __future__ import annotations
 
 class ColunasTransacoes:
     NOME = "Name"
+    NOME_FANTASIA = "Nome Fantasia"
     VALOR = "Valor"
     VALOR_A_RECEBER = "Valor a receber"
     CRIADO_EM = "Criado em"

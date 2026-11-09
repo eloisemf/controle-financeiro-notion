@@ -97,7 +97,7 @@ class TelegramReportBuilder:
         linhas.append(f"  • Rendimento Acumulado: *{lucro_fmt}*")
 
         linhas.append("━━━━━━━━━━━━━━━━━━━━━━")
-        linhas.append("💡 _Para registrar um gasto rápido: envie 'valor descricao' (ex: 15 cafe)_")
+        linhas.append("💡 _Para registrar um gasto: envie 'item ; valor ; categoria' (ex: filtro de cafe ; 20 ; casa)_")
 
         return "\n".join(linhas)
 

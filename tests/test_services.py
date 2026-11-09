@@ -53,6 +53,7 @@ class FakeTransacoesRepo:
         self.criados: list[LancamentoTransacao] = []
         self.conciliados: list[tuple[str, Decimal, date]] = []
         self.datas_ajustadas: list[tuple[str, date]] = []
+        self.nomes_fatura_preenchidos: list[tuple[str, str]] = []
         self.vinculos_mes: dict[str, dict[str, VinculoGastoFixo]] = {}
         self.chaves_mes: dict[str, dict[ChaveIdempotencia, str]] = {}
 
@@ -88,6 +89,9 @@ class FakeTransacoesRepo:
 
     def atualizar_data_previsto(self, transacao_page_id: str, nova_data: date) -> None:
         self.datas_ajustadas.append((transacao_page_id, nova_data))
+
+    def preencher_nome_fatura(self, transacao_page_id: str, nome_fatura: str) -> None:
+        self.nomes_fatura_preenchidos.append((transacao_page_id, nome_fatura))
 
 
 def _criar_fake_repos(
@@ -200,6 +204,31 @@ class TestServicesAndDryRun(unittest.TestCase):
         self.assertEqual(tx_repo.criados[0].valor_a_receber, Decimal("132.90"))
         self.assertEqual(tx_repo.criados[1].mes_competencia, "2026-Dezembro")
         self.assertEqual(tx_repo.criados[1].parcela_atual, 10)
+
+    def test_ingestion_concilia_lancamento_manual_telegram_sem_name(self) -> None:
+        """Quando há um lançamento do Telegram com Name='' e Nome Fantasia preenchido, a fatura preenche o Name sem duplicar."""
+        tx_repo = FakeTransacoesRepo()
+        tx_repo.chaves_mes["2026-Novembro"] = {
+            ChaveIdempotencia("", 2000, "2026-Novembro", "santader credito", "2026-11-08"): "page_telegram_1"
+        }
+        repos, _, _ = _criar_fake_repos([], tx_repo)
+        service = FaturaIngestionService(client=None, config=self.config, repos=repos)
+
+        lancamentos = [
+            LancamentoTransacao(
+                descricao="SUPERMERCADO DIA",
+                valor=Decimal("20.00"),
+                data_compra=date(2026, 11, 8),
+                mes_competencia="2026-Novembro",
+                tipo=TipoTransacao.SAIDA,
+                categoria="Alimentação",
+                conta_ou_cartao="Santader Credito",
+            )
+        ]
+        rel = service.importar_lancamentos(lancamentos, dry_run=False)
+        self.assertEqual(len(rel.gravados), 0)
+        self.assertEqual(len(rel.conciliados_previsto_para_realizado), 1)
+        self.assertEqual(tx_repo.nomes_fatura_preenchidos, [("page_telegram_1", "SUPERMERCADO DIA")])
 
     def test_classificacao_e_helpers_dominio(self) -> None:
         self.assertEqual(decimal_para_centavos(Decimal("10.89")), 1089)

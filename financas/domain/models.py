@@ -318,6 +318,7 @@ class LancamentoTransacao:
     valor_a_receber: Decimal | None = None
     eh_entrada_na_conta: bool = False
     conta_destino: str | None = None
+    nome_fantasia: str | None = None
 
     def __post_init__(self) -> None:
         val = para_decimal(self.valor)
@@ -332,6 +333,8 @@ class LancamentoTransacao:
             object.__setattr__(self, "pessoa", self.pessoa.strip() or None)
         if self.conta_destino is not None:
             object.__setattr__(self, "conta_destino", self.conta_destino.strip() or None)
+        if self.nome_fantasia is not None:
+            object.__setattr__(self, "nome_fantasia", self.nome_fantasia.strip() or None)
 
         if (self.parcela_atual is None) != (self.total_parcelas is None):
             raise ValueError("parcela_atual e total_parcelas devem ser ambos informados ou ambos None.")
