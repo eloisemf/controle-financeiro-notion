@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 import logging
+import re
 from typing import Any
 
 from financas.config import NotionDatabaseIds, NotionPageIds
@@ -139,9 +140,54 @@ class PessoasRepository(BaseNotionRepository):
 
     def id_pessoa(self, nome: str) -> str:
         chave = nome.strip()
-        if chave not in self.pessoas_por_nome:
-            raise KeyError(f"Pessoa não encontrada na database Pessoas: '{chave}'")
-        return self.pessoas_por_nome[chave]
+        if chave in self.pessoas_por_nome:
+            return self.pessoas_por_nome[chave]
+
+        chave_limpa = re.sub(r"[^a-z0-9\s]", "", normalizar_texto_chave(chave)).strip()
+        if chave_limpa:
+            for k, page_id in self.pessoas_por_nome.items():
+                k_limpa = re.sub(r"[^a-z0-9\s]", "", normalizar_texto_chave(k)).strip()
+                if k_limpa == chave_limpa:
+                    return page_id
+
+        raise KeyError(f"Pessoa não encontrada na database Pessoas: '{chave}'")
+
+    def resolver_nome_pessoa(self, termo: str) -> str | None:
+        """Resolve o nome oficial de uma Pessoa no Notion ignorando acentos e maiúsculas/minúsculas."""
+        chave = termo.strip()
+        if not chave:
+            return None
+        if chave in self.pessoas_por_nome:
+            return chave
+
+        chave_limpa = re.sub(r"[^a-z0-9\s]", "", normalizar_texto_chave(chave)).strip()
+        if not chave_limpa:
+            return None
+
+        # 1. Igualdade exata sem acento
+        for nome_oficial in self.pessoas_por_nome:
+            nome_limpo = re.sub(r"[^a-z0-9\s]", "", normalizar_texto_chave(nome_oficial)).strip()
+            if nome_limpo == chave_limpa:
+                return nome_oficial
+
+        # 2. Match parcial por palavra (ex: primeiro nome)
+        for nome_oficial in self.pessoas_por_nome:
+            nome_limpo = re.sub(r"[^a-z0-9\s]", "", normalizar_texto_chave(nome_oficial)).strip()
+            if re.search(rf"\b{re.escape(chave_limpa)}\b", nome_limpo):
+                return nome_oficial
+
+        # 3. Normalização fonética de sufixos comuns (ex: michele / micheli / michelly)
+        def _fonetico(s: str) -> str:
+            s = re.sub(r"([a-z])\1+", r"\1", s)
+            return re.sub(r"[eyi]+$", "i", s)
+
+        chave_fon = _fonetico(chave_limpa)
+        for nome_oficial in self.pessoas_por_nome:
+            nome_limpo = re.sub(r"[^a-z0-9\s]", "", normalizar_texto_chave(nome_oficial)).strip()
+            if _fonetico(nome_limpo) == chave_fon:
+                return nome_oficial
+
+        return None
 
     def nome_pessoa_por_id(self, page_id: str) -> str:
         if self._id_para_pessoa is None:

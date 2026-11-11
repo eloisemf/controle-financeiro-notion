@@ -114,6 +114,32 @@ class TestTelegramParsers(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.parser.criar_lancamento(gasto)
 
+    def test_parse_reembolso_e_criacao_lancamento(self) -> None:
+        reemb = self.parser.parse_reembolso("/reembolso michele ; 145,87")
+        self.assertIsNotNone(reemb)
+        assert reemb is not None
+        self.assertEqual(reemb.pessoa_informada, "michele")
+        self.assertEqual(reemb.valor, Decimal("145.87"))
+        self.assertEqual(reemb.conta_destino, "Santader Conta")
+
+        reemb_espaco = self.parser.parse_reembolso("/reembolso mae 200")
+        self.assertIsNotNone(reemb_espaco)
+        assert reemb_espaco is not None
+        self.assertEqual(reemb_espaco.pessoa_informada, "mae")
+        self.assertEqual(reemb_espaco.valor, Decimal("200.00"))
+
+        lanc = self.parser.criar_lancamento_reembolso(
+            reemb,
+            nome_oficial_pessoa="Michele",
+            data_referencia=date(2026, 11, 10),
+        )
+        self.assertEqual(lanc.descricao, "Pix Reembolso Michele")
+        self.assertEqual(lanc.tipo, TipoTransacao.REEMBOLSO)
+        self.assertEqual(lanc.categoria, "Emprestimo cartão")
+        self.assertEqual(lanc.conta_ou_cartao, "Santader Conta")
+        self.assertEqual(lanc.mes_competencia, "2026-Novembro")
+        self.assertEqual(lanc.pessoa, "Michele")
+
 
 class TestTelegramBotServicePrevistos(unittest.TestCase):
     """Testa lembretes de gastos fixos previstos, exclusão por botão e comandos."""
@@ -215,6 +241,26 @@ class TestTelegramBotServicePrevistos(unittest.TestCase):
         self.mock_repos.transacoes.marcar_como_realizado.assert_called_once_with("page-456")
         self.mock_telegram.enviar_mensagem.assert_called_once()
         self.assertIn("Internet Claro", self.mock_telegram.enviar_mensagem.call_args[0][0])
+
+    def test_comando_reembolso_cria_lancamento_tipo_reembolso(self) -> None:
+        self.mock_repos.pessoas.resolver_nome_pessoa.return_value = "Michele"
+        self.mock_repos.pessoas.pessoas_por_nome = {"Michele": "id-michele", "Mãe": "id-mae"}
+        self.mock_repos.transacoes.criar_lancamento.return_value = "page-reemb-1"
+
+        self.service._tratar_comando("/reembolso michele ; 145,87", chat_id="123456", dry_run=False)
+
+        self.mock_repos.transacoes.criar_lancamento.assert_called_once()
+        lanc = self.mock_repos.transacoes.criar_lancamento.call_args[0][0]
+        self.assertEqual(lanc.tipo, TipoTransacao.REEMBOLSO)
+        self.assertEqual(lanc.pessoa, "Michele")
+        self.assertEqual(lanc.valor, Decimal("145.87"))
+        self.assertEqual(lanc.conta_ou_cartao, "Santader Conta")
+
+        chamada = self.mock_telegram.enviar_mensagem.call_args
+        self.assertIn("Reembolso Registrado no Notion", chamada[0][0])
+        self.assertIn("Michele", chamada[0][0])
+        markup = chamada[1].get("reply_markup", {})
+        self.assertEqual(markup["inline_keyboard"][0][0]["callback_data"], "excluir:page-reemb-1")
 
     def test_telegram_client_retry_em_timeout_de_rede(self) -> None:
         import requests

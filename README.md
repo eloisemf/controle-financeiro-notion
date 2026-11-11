@@ -84,6 +84,7 @@ Conta: santander credito
 * Você pode confirmar clicando no botão **`[✅ Confirmar Aluguel]`** na própria mensagem ou respondendo `/confirmar Aluguel`. O status no Notion muda na hora de `Previsto` para `Realizado`.
 
 ### 4. Comandos do Bot
+* `/reembolso <nome> ; <valor>` — Registra um Pix recebido de amigo/familiar (`Tipo Transação = Reembolso`, `Entrada em = Santader Conta`, `Categoria = Emprestimo cartão`) abatendo o saldo devedor na tabela `Pessoas`.
 * `/categorias` — Lista todas as categorias do Notion e apelidos de contas aceitos.
 * `/modelo` — Envia o template pronto para copiar e colar.
 * `/resumo` — Gera o relatório completo da semana (saldo livre, faturas dos cartões, gastos fixos da semana e patrimônio).

@@ -27,6 +27,7 @@ from typing import NamedTuple
 from financas.domain.billing import CalculadoraFatura, formatar_mes_competencia
 from financas.domain.classification import ClassificadorCategoria
 from financas.domain.models import (
+    CATEGORIA_EMPRESTIMO,
     CartaoConfig,
     LancamentoTransacao,
     Recorrencia,
@@ -100,6 +101,14 @@ class GastoManualExtraido(NamedTuple):
     incerto: bool
     mes_competencia: str | None = None
     categoria_informada: str | None = None
+
+
+class ReembolsoExtraido(NamedTuple):
+    """Dados estruturados extraídos de um comando de reembolso no Telegram."""
+
+    pessoa_informada: str
+    valor: Decimal
+    conta_destino: str = "Santader Conta"
 
 
 class MensagemGastoParser:
@@ -421,4 +430,85 @@ class MensagemGastoParser:
             recorrencia=Recorrencia.NAO_RECORRENTE,
             status=StatusTransacao.REALIZADO,
             uso_dinheiro=gasto.uso_dinheiro,
+        )
+
+    def parse_reembolso(
+        self,
+        texto: str,
+        conta_padrao_reembolso: str = "Santader Conta",
+    ) -> ReembolsoExtraido | None:
+        """Extrai pessoa, valor e conta de destino a partir do comando `/reembolso`.
+
+        Aceita:
+        • `/reembolso michele ; 145,87`
+        • `/reembolso michele ; 145,87 ; inter`
+        • `/reembolso michele 145,87`
+        """
+        limpo = re.sub(r"^/(?:reembolso|recebi|pagou)\b", "", texto.strip(), flags=re.IGNORECASE).strip()
+        if not limpo:
+            return None
+
+        conta_destino = conta_padrao_reembolso
+
+        if ";" in limpo or "|" in limpo:
+            partes = [p.strip() for p in re.split(r"[;|]", limpo) if p.strip()]
+            if len(partes) < 2:
+                return None
+
+            val_0 = self._extrair_decimal(partes[0]) if self._RE_VALOR_EXATO.match(partes[0]) else None
+            val_1 = self._extrair_decimal(partes[1])
+
+            if val_1 is not None and not self._RE_VALOR_EXATO.match(partes[0]):
+                pessoa_str = partes[0].strip()
+                valor = val_1
+            elif val_0 is not None:
+                valor = val_0
+                pessoa_str = partes[1].strip()
+            else:
+                return None
+
+            if len(partes) >= 3:
+                conta_resolvida = self.resolver_conta(partes[2])
+                if conta_resolvida.endswith("Credito"):
+                    conta_destino = conta_resolvida.replace("Credito", "Conta")
+                else:
+                    conta_destino = conta_resolvida
+        else:
+            m = self._RE_VALOR_BUSCA.search(limpo)
+            if not m:
+                return None
+            valor = self._extrair_decimal(m.group(0))
+            if valor is None:
+                return None
+            pessoa_str = (limpo[: m.start()] + " " + limpo[m.end() :]).strip()
+
+        if not pessoa_str or valor is None:
+            return None
+
+        return ReembolsoExtraido(
+            pessoa_informada=pessoa_str,
+            valor=valor,
+            conta_destino=conta_destino,
+        )
+
+    def criar_lancamento_reembolso(
+        self,
+        reembolso: ReembolsoExtraido,
+        nome_oficial_pessoa: str,
+        data_referencia: date | None = None,
+    ) -> LancamentoTransacao:
+        """Cria um `LancamentoTransacao` com `TipoTransacao.REEMBOLSO` para o mês atual."""
+        hoje = data_referencia or date.today()
+        mes_comp = formatar_mes_competencia(hoje.year, hoje.month)
+        return LancamentoTransacao(
+            descricao=f"Pix Reembolso {nome_oficial_pessoa}",
+            valor=reembolso.valor,
+            data_compra=hoje,
+            mes_competencia=mes_comp,
+            tipo=TipoTransacao.REEMBOLSO,
+            categoria=CATEGORIA_EMPRESTIMO,
+            conta_ou_cartao=reembolso.conta_destino,
+            recorrencia=Recorrencia.NAO_RECORRENTE,
+            status=StatusTransacao.REALIZADO,
+            pessoa=nome_oficial_pessoa,
         )

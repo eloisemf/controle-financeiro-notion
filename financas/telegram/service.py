@@ -138,6 +138,17 @@ class TelegramBotService:
             logger.debug("Fallback para categorias do parser: %s", exc)
         return self._parser.categorias_disponiveis()
 
+    def _obter_lista_pessoas(self) -> list[str]:
+        """Retorna a lista ordenada de pessoas cadastradas na tabela Pessoas do Notion."""
+        try:
+            if self._repos.pessoas is not None:
+                nomes = list(self._repos.pessoas.pessoas_por_nome.keys())
+                if nomes:
+                    return sorted(nomes)
+        except Exception as exc:
+            logger.debug("Falha ao listar pessoas do Notion: %s", exc)
+        return []
+
     def _tratar_comando(self, comando: str, chat_id: str, dry_run: bool = False) -> None:
         partes_cmd = comando.split()
         cmd = partes_cmd[0].lower()
@@ -158,8 +169,12 @@ class TelegramBotService:
                 "Conta: Santander Credito\n"
                 "```\n"
                 "ℹ️ *Padrões automáticos:* Conta = `Santader Credito` | Uso = `Nao essencial`.\n\n"
+                "💜 *Reembolso de Amigos/Pessoas (Pix recebido):*\n"
+                "• `/reembolso michele ; 145,87`\n"
+                "• `/reembolso mae ; 200`\n\n"
                 "📸 Você também pode mandar *prints de faturas ou PDFs*!\n\n"
                 "📌 *Comandos disponíveis:*\n"
+                "/reembolso [nome] ; [valor] — Registra Pix recebido de terceiro\n"
                 "/categorias — Lista todas as categorias e contas aceitas\n"
                 "/modelo — Envia o molde pronto para copiar e colar\n"
                 "/resumo — Relatório de gastos, saldo livre e faturas\n"
@@ -201,6 +216,9 @@ class TelegramBotService:
                 "`filtro de cafe ; 20 ; casa`"
             )
             self._telegram.enviar_mensagem(msg_modelo, chat_id=chat_id)
+
+        elif cmd in ("/reembolso", "/recebi", "/pagou", "/pessoas"):
+            self._tratar_reembolso(comando, chat_id, dry_run=dry_run)
 
         elif cmd in ("/confirmar", "/confirmado", "/pago"):
             if len(partes_cmd) < 2:
@@ -291,6 +309,81 @@ class TelegramBotService:
             "O saldo livre e as fórmulas do Notion já foram atualizados!"
         )
         self._telegram.enviar_mensagem(msg, chat_id=chat_id)
+
+    def _tratar_reembolso(self, comando: str, chat_id: str, dry_run: bool = False) -> None:
+        """Processa o comando `/reembolso Nome ; Valor [; Conta]` e registra `TipoTransacao.REEMBOLSO`."""
+        pessoas_lista = self._obter_lista_pessoas()
+        bloco_pessoas = (
+            "\n".join(f"• `{p}`" for p in pessoas_lista)
+            if pessoas_lista
+            else "• *(Consulte a tabela Pessoas no Notion)*"
+        )
+
+        reembolso = self._parser.parse_reembolso(comando)
+        if not reembolso:
+            msg_instrucoes = (
+                "💜 *COMO REGISTRAR UM REEMBOLSO (PIX RECEBIDO):*\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Envie no formato:\n"
+                "`/reembolso Nome ; Valor`\n\n"
+                "💡 *Exemplos:*\n"
+                "• `/reembolso michele ; 145,87`\n"
+                "• `/reembolso mae ; 200`\n"
+                "• `/reembolso michele ; 50 ; inter`\n\n"
+                "👥 *Pessoas cadastradas no Notion:*\n"
+                f"{bloco_pessoas}\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "ℹ️ *Padrões:* Tipo = `Reembolso` | Entrada em = `Santader Conta` | Mês = Mês atual."
+            )
+            self._telegram.enviar_mensagem(msg_instrucoes, chat_id=chat_id)
+            return
+
+        nome_oficial: str | None = None
+        if self._repos.pessoas is not None:
+            nome_oficial = self._repos.pessoas.resolver_nome_pessoa(reembolso.pessoa_informada)
+
+        if not nome_oficial:
+            msg_erro = (
+                f"⚠️ Não encontrei `'{reembolso.pessoa_informada}'` na tabela *Pessoas* do Notion.\n\n"
+                "👥 *Pessoas cadastradas:*\n"
+                f"{bloco_pessoas}\n\n"
+                "💡 *Exemplo:* `/reembolso nome ; valor`"
+            )
+            self._telegram.enviar_mensagem(msg_erro, chat_id=chat_id)
+            return
+
+        hoje = date.today()
+        lancamento = self._parser.criar_lancamento_reembolso(
+            reembolso=reembolso,
+            nome_oficial_pessoa=nome_oficial,
+            data_referencia=hoje,
+        )
+
+        page_id = "dry-run-id"
+        if not dry_run:
+            self._repos.meses.garantir_mes(hoje.year, hoje.month)
+            page_id = self._repos.transacoes.criar_lancamento(lancamento)
+
+        val_fmt = f"R$ {lancamento.valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        msg_confirmacao = (
+            "💜 *Reembolso Registrado no Notion!*\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"• *Descrição:* {lancamento.descricao}\n"
+            f"• *Pessoa:* *{nome_oficial}*\n"
+            f"• *Valor Recebido:* *{val_fmt}*\n"
+            f"• *Tipo Transação:* `Reembolso` 🟣\n"
+            f"• *Entrada em:* {lancamento.conta_ou_cartao}\n"
+            f"• *Categoria:* {lancamento.categoria}\n"
+            f"• *Mês Competência:* {lancamento.mes_competencia}\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "✅ O saldo devedor de *" + nome_oficial + "* já foi abatido!"
+        )
+        botoes = {
+            "inline_keyboard": [
+                [{"text": "🗑️ Desfazer / Excluir Lançamento", "callback_data": f"excluir:{page_id}"}]
+            ]
+        }
+        self._telegram.enviar_mensagem(msg_confirmacao, chat_id=chat_id, reply_markup=botoes)
 
     def _tratar_gasto_texto(self, texto: str, chat_id: str, dry_run: bool = False) -> None:
         gasto = self._parser.parse_mensagem(texto)
