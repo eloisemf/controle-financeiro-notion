@@ -408,8 +408,9 @@ class SantanderCartaoVisionParser(BaseDocumentoParser):
     """Extrator para fatura aberta de cartão (via print `.png`/`.jpg` com Gemini Flash ou `.txt`)."""
 
     _MODELS_FALLBACK_DEFAULT = (
-        "gemini-2.5-flash",
-        "gemini-2.0-flash",
+        "gemini-3.5-flash",
+        "gemini-3.8-flash",
+        "gemini-flash-latest",
     )
     _EXTENSOES_IMAGEM = (".png", ".jpg", ".jpeg", ".webp")
     _RE_TXT_LINHA = re.compile(

@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from datetime import date
 from decimal import Decimal
+from difflib import SequenceMatcher
 import json
 import logging
 from pathlib import Path
+import re
 from typing import Iterable
 
 from financas.config import AppConfig
@@ -288,6 +291,73 @@ class FaturaIngestionService:
 
         return item_enriquecido, False
 
+    @staticmethod
+    def _contas_equivalentes(conta_a: str, conta_b: str) -> bool:
+        """Compara nomes de conta normalizados aceitando a grafia histórica 'santader'."""
+        if conta_a == conta_b:
+            return True
+        return conta_a.replace("santander", "santader") == conta_b.replace("santander", "santader")
+
+    @classmethod
+    def _buscar_chave_telegram_manual(
+        cls,
+        chave: ChaveIdempotencia,
+        chaves_mes: dict[ChaveIdempotencia, str],
+        tolerancia_dias: int = 2,
+    ) -> ChaveIdempotencia | None:
+        """Localiza lançamento manual do Telegram (`Name=''`) no mesmo mês/valor com até ±2 dias."""
+        try:
+            data_alvo = date.fromisoformat(chave.data_iso)
+        except ValueError:
+            return None
+
+        melhor: ChaveIdempotencia | None = None
+        menor_diff: int | None = None
+        for k in chaves_mes:
+            if (
+                k.descricao_norm == ""
+                and k.centavos == chave.centavos
+                and k.mes_competencia == chave.mes_competencia
+                and cls._contas_equivalentes(k.conta_norm, chave.conta_norm)
+            ):
+                try:
+                    diff = abs((date.fromisoformat(k.data_iso) - data_alvo).days)
+                except ValueError:
+                    continue
+                if diff <= tolerancia_dias and (menor_diff is None or diff < menor_diff):
+                    melhor = k
+                    menor_diff = diff
+        return melhor
+
+    @classmethod
+    def _buscar_chave_ocr_equivalente(
+        cls,
+        chave: ChaveIdempotencia,
+        chaves_mes: dict[ChaveIdempotencia, str],
+    ) -> ChaveIdempotencia | None:
+        """Detecta duplicidade quando o OCR leu o mesmo gasto com pequena variação de texto."""
+        desc_alvo = re.sub(r"[^a-z0-9]", "", chave.descricao_norm)
+        if len(desc_alvo) < 4:
+            return None
+
+        for k in chaves_mes:
+            if (
+                not k.descricao_norm
+                or k.centavos != chave.centavos
+                or k.mes_competencia != chave.mes_competencia
+                or k.data_iso != chave.data_iso
+                or not cls._contas_equivalentes(k.conta_norm, chave.conta_norm)
+            ):
+                continue
+            desc_k = re.sub(r"[^a-z0-9]", "", k.descricao_norm)
+            if len(desc_k) < 4:
+                continue
+            if desc_k.startswith(desc_alvo) or desc_alvo.startswith(desc_k):
+                return k
+            if SequenceMatcher(None, desc_k, desc_alvo).ratio() >= 0.72:
+                return k
+        return None
+
     def _tentar_religar_ou_ignorar(
         self,
         item: LancamentoTransacao,
@@ -324,21 +394,22 @@ class FaturaIngestionService:
             return True
 
         # Conciliação com lançamento manual do Telegram (onde Name="" e Nome Fantasia já foi preenchido)
-        chave_sem_nome = ChaveIdempotencia(
-            "",
-            chave.centavos,
-            chave.mes_competencia,
-            chave.conta_norm,
-            chave.data_iso,
-        )
-        if chave_sem_nome in chaves_mes:
-            page_id_manual = chaves_mes.pop(chave_sem_nome)
+        # Aceita variação de até ±2 dias entre o envio no Telegram e a data na fatura.
+        chave_manual = self._buscar_chave_telegram_manual(chave, chaves_mes)
+        if chave_manual is not None:
+            page_id_manual = chaves_mes.pop(chave_manual)
             if not dry_run:
                 self._repos.transacoes.preencher_nome_fatura(
                     page_id_manual, item.descricao_com_parcela
                 )
             chaves_mes[chave] = page_id_manual
             relatorio.conciliados_previsto_para_realizado.append(resumo_item)
+            return True
+
+        # Tolerância a pequenas variações de OCR no mesmo dia, conta e valor
+        chave_ocr = self._buscar_chave_ocr_equivalente(chave, chaves_mes)
+        if chave_ocr is not None:
+            relatorio.ignorados_por_idempotencia.append(resumo_item)
             return True
 
         if chave_parcial in orfas:

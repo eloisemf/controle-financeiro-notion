@@ -5,7 +5,7 @@ Formatos pré-acordados (sem adivinhação destrutiva no nome do item):
    • Item: filtro de café
    • Valor: 20
    • Categoria: Casa
-   • Conta/Cartão: Santander Credito (opcional, padrão = Santader Credito)
+   • Conta/Cartão: Santander Credito (opcional, padrão = Santander Credito)
    • Uso: Nao essencial (opcional, padrão = Nao essencial)
    • Mês Competência: 2026-Novembro (opcional, calculado automaticamente)
 
@@ -101,6 +101,8 @@ class GastoManualExtraido(NamedTuple):
     incerto: bool
     mes_competencia: str | None = None
     categoria_informada: str | None = None
+    parcela_atual: int | None = None
+    total_parcelas: int | None = None
 
 
 class ReembolsoExtraido(NamedTuple):
@@ -108,7 +110,7 @@ class ReembolsoExtraido(NamedTuple):
 
     pessoa_informada: str
     valor: Decimal
-    conta_destino: str = "Santader Conta"
+    conta_destino: str = "Santander Conta"
 
 
 class MensagemGastoParser:
@@ -121,10 +123,12 @@ class MensagemGastoParser:
     _RE_VALOR_BUSCA = re.compile(
         r"(?i)(?:R\$\s*)?(\d{1,6}(?:[,\.]\d{1,2})?)(?!\S)",
     )
+    _RE_PARCELAS_TOTAL = re.compile(r"^\s*(\d{1,2})\s*x\s*$", re.IGNORECASE)
+    _RE_PARCELA_FRACAO = re.compile(r"^\s*(\d{1,2})\s*/\s*(\d{1,2})\s*$")
 
     def __init__(
         self,
-        conta_padrao: str = "Santader Credito",
+        conta_padrao: str = "Santander Credito",
         uso_padrao: str = UsoDinheiro.NAO_ESSENCIAL.value,
         classificador: ClassificadorCategoria | None = None,
         calculadora: CalculadoraFatura | None = None,
@@ -245,6 +249,25 @@ class MensagemGastoParser:
         explicito = self._eh_uso_explicito(texto_uso)
         return explicito if explicito is not None else self.uso_padrao
 
+    def _resolver_parcelas(self, texto: str) -> tuple[int, int, bool] | None:
+        """Extrai `(parcela_atual, total_parcelas, dividir_valor)` de `'5x'` ou `'01/05'`."""
+        limpo = texto.strip()
+        if not limpo:
+            return None
+        m_total = self._RE_PARCELAS_TOTAL.match(limpo)
+        if m_total:
+            total = int(m_total.group(1))
+            if 2 <= total <= 48:
+                return (1, total, True)
+            return None
+        m_frac = self._RE_PARCELA_FRACAO.match(limpo)
+        if m_frac:
+            atual = int(m_frac.group(1))
+            total = int(m_frac.group(2))
+            if 1 <= atual <= total <= 48 and total >= 2:
+                return (atual, total, False)
+        return None
+
     def _parse_formato_dicionario(self, texto: str) -> GastoManualExtraido | None:
         """Lê mensagens no formato de dicionário (Chave: Valor em linhas)."""
         campos: dict[str, str] = {}
@@ -317,6 +340,26 @@ class MensagemGastoParser:
         ).strip()
         mes_comp = mes_bruto if mes_bruto else None
 
+        parc_bruta = (
+            campos.get("parcelas")
+            or campos.get("parcela")
+            or campos.get("parcelamento")
+            or ""
+        ).strip()
+        p_atual: int | None = None
+        p_total: int | None = None
+        if parc_bruta:
+            if parc_bruta.isdigit() and 2 <= int(parc_bruta) <= 48:
+                p_atual, p_total, dividir = 1, int(parc_bruta), True
+            else:
+                res_parc = self._resolver_parcelas(parc_bruta)
+                if res_parc:
+                    p_atual, p_total, dividir = res_parc
+                else:
+                    dividir = False
+            if dividir and p_total:
+                valor = (valor / Decimal(p_total)).quantize(Decimal("0.01"))
+
         return GastoManualExtraido(
             descricao=descricao,
             valor=valor,
@@ -326,6 +369,8 @@ class MensagemGastoParser:
             incerto=categoria is None,
             mes_competencia=mes_comp,
             categoria_informada=cat_sem_parenteses or None,
+            parcela_atual=p_atual,
+            total_parcelas=p_total,
         )
 
     def _parse_formato_separador(self, texto: str) -> GastoManualExtraido | None:
@@ -359,8 +404,16 @@ class MensagemGastoParser:
 
         conta = self.conta_padrao
         uso = self.uso_padrao
+        p_atual: int | None = None
+        p_total: int | None = None
 
         for extra in partes[3:]:
+            res_parc = self._resolver_parcelas(extra)
+            if res_parc is not None:
+                p_atual, p_total, dividir = res_parc
+                if dividir:
+                    valor = (valor / Decimal(p_total)).quantize(Decimal("0.01"))
+                continue
             uso_teste = self._eh_uso_explicito(extra)
             if uso_teste is not None:
                 uso = uso_teste
@@ -376,6 +429,8 @@ class MensagemGastoParser:
             incerto=categoria is None,
             mes_competencia=None,
             categoria_informada=cat_bruta or None,
+            parcela_atual=p_atual,
+            total_parcelas=p_total,
         )
 
     def parse_mensagem(self, texto: str) -> GastoManualExtraido | None:
@@ -418,8 +473,17 @@ class MensagemGastoParser:
             else:
                 mes_comp = formatar_mes_competencia(hoje.year, hoje.month)
 
+        eh_parcelado = (
+            gasto.parcela_atual is not None and gasto.total_parcelas is not None
+        )
+        desc_lanc = (
+            f"{gasto.descricao} - Parc {gasto.parcela_atual:02d}/{gasto.total_parcelas:02d}"
+            if eh_parcelado
+            else ""
+        )
+
         return LancamentoTransacao(
-            descricao="",
+            descricao=desc_lanc,
             nome_fantasia=gasto.descricao,
             valor=gasto.valor,
             data_compra=hoje,
@@ -430,12 +494,14 @@ class MensagemGastoParser:
             recorrencia=Recorrencia.NAO_RECORRENTE,
             status=StatusTransacao.REALIZADO,
             uso_dinheiro=gasto.uso_dinheiro,
+            parcela_atual=gasto.parcela_atual,
+            total_parcelas=gasto.total_parcelas,
         )
 
     def parse_reembolso(
         self,
         texto: str,
-        conta_padrao_reembolso: str = "Santader Conta",
+        conta_padrao_reembolso: str = "Santander Conta",
     ) -> ReembolsoExtraido | None:
         """Extrai pessoa, valor e conta de destino a partir do comando `/reembolso`.
 

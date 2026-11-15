@@ -51,10 +51,10 @@ Formato: `Item ; Valor ; Categoria [; Conta] [; Uso]`
 
 | Mensagem | Item | Valor | Categoria | Conta / Cartão | Uso |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `filtro de cafe ; 20 ; casa` | filtro de cafe | R$ 20,00 | Casa | *Santader Credito (padrão)* | *Nao essencial (padrão)* |
-| `almoco ; 35,90 ; alimentacao ; debito` | almoco | R$ 35,90 | Alimentação | Santader Conta | *Nao essencial* |
+| `filtro de cafe ; 20 ; casa` | filtro de cafe | R$ 20,00 | Casa | *Santander Credito (padrão)* | *Nao essencial (padrão)* |
+| `almoco ; 35,90 ; alimentacao ; debito` | almoco | R$ 35,90 | Alimentação | Santander Conta | *Nao essencial* |
 | `uber ; 22,50 ; transporte ; inter` | uber | R$ 22,50 | Transporte Privado | Inter Credito | *Nao essencial* |
-| `remedio ; 45,90 ; saude ; debito ; essencial` | remedio | R$ 45,90 | Saúde | Santader Conta | Essencial |
+| `remedio ; 45,90 ; saude ; debito ; essencial` | remedio | R$ 45,90 | Saúde | Santander Conta | Essencial |
 
 #### Opção B: Modelo Copiar & Colar (`/modelo`)
 ```text
@@ -84,7 +84,7 @@ Conta: santander credito
 * Você pode confirmar clicando no botão **`[✅ Confirmar Aluguel]`** na própria mensagem ou respondendo `/confirmar Aluguel`. O status no Notion muda na hora de `Previsto` para `Realizado`.
 
 ### 4. Comandos do Bot
-* `/reembolso <nome> ; <valor>` — Registra um Pix recebido de amigo/familiar (`Tipo Transação = Reembolso`, `Entrada em = Santader Conta`, `Categoria = Emprestimo cartão`) abatendo o saldo devedor na tabela `Pessoas`.
+* `/reembolso <nome> ; <valor>` — Registra um Pix recebido de amigo/familiar (`Tipo Transação = Reembolso`, `Entrada em = Santander Conta`, `Categoria = Emprestimo cartão`) abatendo o saldo devedor na tabela `Pessoas`.
 * `/categorias` — Lista todas as categorias do Notion e apelidos de contas aceitos.
 * `/modelo` — Envia o template pronto para copiar e colar.
 * `/resumo` — Gera o relatório completo da semana (saldo livre, faturas dos cartões, gastos fixos da semana e patrimônio).

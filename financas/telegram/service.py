@@ -56,7 +56,7 @@ class TelegramBotService:
             meses_repo=self._repos.meses,
         )
         self._parser = MensagemGastoParser(
-            conta_padrao="Santader Credito",
+            conta_padrao="Santander Credito",
             classificador=ClassificadorCategoria(),
             calculadora=self._calc,
             cartoes=self.config.cartoes,
@@ -160,7 +160,8 @@ class TelegramBotService:
                 "`Item ; Valor ; Categoria`\n"
                 "• `filtro de cafe ; 20 ; casa`\n"
                 "• `almoco ; 35,90 ; alimentacao ; debito`\n"
-                "• `remedio ; 45 ; saude ; inter ; essencial`\n\n"
+                "• `remedio ; 45 ; saude ; inter ; essencial`\n"
+                "• `tenis ; 549,99 ; vestuario ; 5x` *(divide em 5 parcelas)*\n\n"
                 "2️⃣ *Modelo Copiar & Colar (digite /modelo):*\n"
                 "```text\n"
                 "Item: filtro de café\n"
@@ -168,7 +169,7 @@ class TelegramBotService:
                 "Categoria: Casa\n"
                 "Conta: Santander Credito\n"
                 "```\n"
-                "ℹ️ *Padrões automáticos:* Conta = `Santader Credito` | Uso = `Nao essencial`.\n\n"
+                "ℹ️ *Padrões automáticos:* Conta = `Santander Credito` | Uso = `Nao essencial`.\n\n"
                 "💜 *Reembolso de Amigos/Pessoas (Pix recebido):*\n"
                 "• `/reembolso michele ; 145,87`\n"
                 "• `/reembolso mae ; 200`\n\n"
@@ -194,8 +195,8 @@ class TelegramBotService:
                 f"{linhas_cat}\n"
                 "━━━━━━━━━━━━━━━━━━━━━━\n"
                 "💳 *CONTAS / CARTÕES ACEITOS:*\n"
-                "• `santander` *(padrão: Santader Credito)*\n"
-                "• `debito` ou `pix` *(Santader Conta)*\n"
+                "• `santander` *(padrão: Santander Credito)*\n"
+                "• `debito` ou `pix` *(Santander Conta)*\n"
                 "• `inter` *(Inter Credito)* | `inter conta`\n"
                 "• `bradesco` *(Bradesco Credito)* | `bradesco conta`\n"
                 "• `amazon` *(Amazon bradescard)*\n\n"
@@ -211,9 +212,11 @@ class TelegramBotService:
                 "`Item: `\n"
                 "`Valor: `\n"
                 "`Categoria: `\n"
-                "`Conta/Cartão: Santander Credito`\n\n"
+                "`Conta/Cartão: Santander Credito`\n"
+                "`Parcelas: ` *(opcional, ex: 5x ou 01/05)*\n\n"
                 "⚡ *OU ATALHO DE 1 LINHA (com `;`):*\n"
-                "`filtro de cafe ; 20 ; casa`"
+                "`filtro de cafe ; 20 ; casa`\n"
+                "`tenis ; 549,99 ; vestuario ; 5x`"
             )
             self._telegram.enviar_mensagem(msg_modelo, chat_id=chat_id)
 
@@ -333,7 +336,7 @@ class TelegramBotService:
                 "👥 *Pessoas cadastradas no Notion:*\n"
                 f"{bloco_pessoas}\n"
                 "━━━━━━━━━━━━━━━━━━━━━━\n"
-                "ℹ️ *Padrões:* Tipo = `Reembolso` | Entrada em = `Santader Conta` | Mês = Mês atual."
+                "ℹ️ *Padrões:* Tipo = `Reembolso` | Entrada em = `Santander Conta` | Mês = Mês atual."
             )
             self._telegram.enviar_mensagem(msg_instrucoes, chat_id=chat_id)
             return
@@ -429,18 +432,28 @@ class TelegramBotService:
             return
 
         lancamento = self._parser.criar_lancamento(gasto)
+        futuras = self._calc.projetar_parcelas_futuras(lancamento) if lancamento.eh_parcelado else []
 
         page_id = "dry-run-id"
         if not dry_run:
             page_id = self._repos.transacoes.criar_lancamento(lancamento)
+            for parc_futura in futuras:
+                self._repos.transacoes.criar_lancamento(parc_futura)
 
         val_fmt = f"R$ {lancamento.valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
         nome_exibicao = lancamento.nome_fantasia or lancamento.descricao
+        bloco_parcelas = ""
+        if lancamento.eh_parcelado and lancamento.parcela_atual and lancamento.total_parcelas:
+            extra_fut = f" (+{len(futuras)} futura(s) projetada(s))" if futuras else ""
+            bloco_parcelas = (
+                f"• *Parcelamento:* {lancamento.parcela_atual:02d}/{lancamento.total_parcelas:02d}{extra_fut}\n"
+            )
         msg_confirmacao = (
             "✅ *Despesa Registrada no Notion!*\n"
             "━━━━━━━━━━━━━━━━━━━━━━\n"
             f"• *Item (Nome Fantasia):* {nome_exibicao}\n"
             f"• *Valor:* *{val_fmt}*\n"
+            f"{bloco_parcelas}"
             f"• *Conta/Cartão:* {lancamento.conta_ou_cartao}\n"
             f"• *Categoria:* {lancamento.categoria} ({lancamento.uso_dinheiro})\n"
             f"• *Mês Competência:* {lancamento.mes_competencia}\n"

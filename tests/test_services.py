@@ -209,7 +209,7 @@ class TestServicesAndDryRun(unittest.TestCase):
         """Quando há um lançamento do Telegram com Name='' e Nome Fantasia preenchido, a fatura preenche o Name sem duplicar."""
         tx_repo = FakeTransacoesRepo()
         tx_repo.chaves_mes["2026-Novembro"] = {
-            ChaveIdempotencia("", 2000, "2026-Novembro", "santader credito", "2026-11-08"): "page_telegram_1"
+            ChaveIdempotencia("", 2000, "2026-Novembro", "santander credito", "2026-11-08"): "page_telegram_1"
         }
         repos, _, _ = _criar_fake_repos([], tx_repo)
         service = FaturaIngestionService(client=None, config=self.config, repos=repos)
@@ -222,13 +222,72 @@ class TestServicesAndDryRun(unittest.TestCase):
                 mes_competencia="2026-Novembro",
                 tipo=TipoTransacao.SAIDA,
                 categoria="Alimentação",
-                conta_ou_cartao="Santader Credito",
+                conta_ou_cartao="Santander Credito",
             )
         ]
         rel = service.importar_lancamentos(lancamentos, dry_run=False)
         self.assertEqual(len(rel.gravados), 0)
         self.assertEqual(len(rel.conciliados_previsto_para_realizado), 1)
         self.assertEqual(tx_repo.nomes_fatura_preenchidos, [("page_telegram_1", "SUPERMERCADO DIA")])
+
+    def test_ingestion_concilia_telegram_com_diferenca_de_dias(self) -> None:
+        """Lançamento manual no Telegram enviado até ±2 dias depois concilia sem duplicar."""
+        tx_repo = FakeTransacoesRepo()
+        tx_repo.chaves_mes["2026-Novembro"] = {
+            ChaveIdempotencia("", 3875, "2026-Novembro", "santader credito", "2026-11-11"): "page_tg_shopee"
+        }
+        repos, _, _ = _criar_fake_repos([], tx_repo)
+        service = FaturaIngestionService(client=None, config=self.config, repos=repos)
+
+        lancamentos = [
+            LancamentoTransacao(
+                descricao="SHOPEE *HLCamiseta",
+                valor=Decimal("38.75"),
+                data_compra=date(2026, 11, 10),
+                mes_competencia="2026-Novembro",
+                tipo=TipoTransacao.SAIDA,
+                categoria="Vestuário",
+                conta_ou_cartao="Santander Credito",
+            )
+        ]
+        rel = service.importar_lancamentos(lancamentos, dry_run=False)
+        self.assertEqual(len(rel.gravados), 0)
+        self.assertEqual(len(rel.conciliados_previsto_para_realizado), 1)
+        self.assertEqual(tx_repo.nomes_fatura_preenchidos, [("page_tg_shopee", "SHOPEE *HLCamiseta")])
+
+    def test_ingestion_ignora_variacao_ocr_mesmo_dia_e_valor(self) -> None:
+        """Pequenas diferenças de OCR no mesmo dia/valor/conta são reconhecidas como idempotentes."""
+        tx_repo = FakeTransacoesRepo()
+        tx_repo.chaves_mes["2026-Novembro"] = {
+            ChaveIdempotencia("pg .nuvem sabic", 2968, "2026-Novembro", "santander credito", "2026-11-09"): "page_ocr_1",
+            ChaveIdempotencia("andrezanardopere", 2000, "2026-Novembro", "santander credito", "2026-11-07"): "page_ocr_2",
+        }
+        repos, _, _ = _criar_fake_repos([], tx_repo)
+        service = FaturaIngestionService(client=None, config=self.config, repos=repos)
+
+        lancamentos = [
+            LancamentoTransacao(
+                descricao="PG *NUVEM SABICHONAS",
+                valor=Decimal("29.68"),
+                data_compra=date(2026, 11, 9),
+                mes_competencia="2026-Novembro",
+                tipo=TipoTransacao.SAIDA,
+                categoria="Outros",
+                conta_ou_cartao="Santander Credito",
+            ),
+            LancamentoTransacao(
+                descricao="AndreaZanardoPere",
+                valor=Decimal("20.00"),
+                data_compra=date(2026, 11, 7),
+                mes_competencia="2026-Novembro",
+                tipo=TipoTransacao.SAIDA,
+                categoria="Outros",
+                conta_ou_cartao="Santander Credito",
+            ),
+        ]
+        rel = service.importar_lancamentos(lancamentos, dry_run=False)
+        self.assertEqual(len(rel.gravados), 0)
+        self.assertEqual(len(rel.ignorados_por_idempotencia), 2)
 
     def test_classificacao_e_helpers_dominio(self) -> None:
         self.assertEqual(decimal_para_centavos(Decimal("10.89")), 1089)

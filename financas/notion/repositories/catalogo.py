@@ -49,6 +49,12 @@ class CatalogoRepository(BaseNotionRepository):
                 k_limpa = re.sub(r"[^a-z0-9\s]", "", normalizar_texto_chave(k)).strip()
                 if k_limpa == chave_limpa:
                     return page_id
+            if chave_catalogo == "contas" and "santander" in chave_limpa:
+                chave_alt = chave_limpa.replace("santander", "santader")
+                for k, page_id in mapa.items():
+                    k_limpa = re.sub(r"[^a-z0-9\s]", "", normalizar_texto_chave(k)).strip()
+                    if k_limpa == chave_alt:
+                        return page_id
 
         raise KeyError(f"{label_erro} não encontrado(a) no Notion: '{chave}'")
 

@@ -18,7 +18,7 @@ class TestTelegramParsers(unittest.TestCase):
 
     def setUp(self) -> None:
         self.parser = MensagemGastoParser(
-            conta_padrao="Santader Credito",
+            conta_padrao="Santander Credito",
             classificador=ClassificadorCategoria(),
             calculadora=CalculadoraFatura(),
             cartoes=DEFAULT_CARTOES,
@@ -32,7 +32,7 @@ class TestTelegramParsers(unittest.TestCase):
         self.assertEqual(gasto.descricao, "filtro de cafe")
         self.assertEqual(gasto.valor, Decimal("20.00"))
         self.assertEqual(gasto.categoria, "Casa")
-        self.assertEqual(gasto.conta_ou_cartao, "Santader Credito")
+        self.assertEqual(gasto.conta_ou_cartao, "Santander Credito")
         self.assertEqual(gasto.uso_dinheiro, "Nao essencial")
 
     def test_formato_dicionario_multilinha_com_bullets_e_sem_acentos(self) -> None:
@@ -48,16 +48,16 @@ class TestTelegramParsers(unittest.TestCase):
         assert gasto is not None
         self.assertEqual(gasto.descricao, "filtro de café")
         self.assertEqual(gasto.valor, Decimal("20.00"))
-        self.assertEqual(gasto.conta_ou_cartao, "Santader Credito")
+        self.assertEqual(gasto.conta_ou_cartao, "Santander Credito")
         self.assertEqual(gasto.categoria, "Casa")
         self.assertEqual(gasto.uso_dinheiro, "Nao essencial")
         self.assertIsNone(gasto.mes_competencia)
 
     def test_tolerancia_a_falta_de_acentos_em_categorias_e_contas(self) -> None:
         casos = [
-            ("almoco ; 35,90 ; alimentacao ; debito", "Alimentação", "Santader Conta"),
-            ("vitamina ; 49,90 ; saude ; santander credito", "Saúde", "Santader Credito"),
-            ("bilhete ; 5,00 ; transporte publico ; pix", "Transporte Público", "Santader Conta"),
+            ("almoco ; 35,90 ; alimentacao ; debito", "Alimentação", "Santander Conta"),
+            ("vitamina ; 49,90 ; saude ; santander credito", "Saúde", "Santander Credito"),
+            ("bilhete ; 5,00 ; transporte publico ; pix", "Transporte Público", "Santander Conta"),
             ("ingresso ; 40 ; diversao ; inter", "Diversão", "Inter Credito"),
             ("fone ; 120 ; eletronicos ; amazon", "Eletronicos", "Amazon bradescard"),
         ]
@@ -75,7 +75,7 @@ class TestTelegramParsers(unittest.TestCase):
         self.assertIsNotNone(gasto)
         assert gasto is not None
         self.assertEqual(gasto.categoria, "Saúde")
-        self.assertEqual(gasto.conta_ou_cartao, "Santader Conta")
+        self.assertEqual(gasto.conta_ou_cartao, "Santander Conta")
         self.assertEqual(gasto.uso_dinheiro, "Essencial")
 
     def test_gasto_sem_categoria_retorna_categoria_none(self) -> None:
@@ -120,7 +120,7 @@ class TestTelegramParsers(unittest.TestCase):
         assert reemb is not None
         self.assertEqual(reemb.pessoa_informada, "michele")
         self.assertEqual(reemb.valor, Decimal("145.87"))
-        self.assertEqual(reemb.conta_destino, "Santader Conta")
+        self.assertEqual(reemb.conta_destino, "Santander Conta")
 
         reemb_espaco = self.parser.parse_reembolso("/reembolso mae 200")
         self.assertIsNotNone(reemb_espaco)
@@ -136,7 +136,7 @@ class TestTelegramParsers(unittest.TestCase):
         self.assertEqual(lanc.descricao, "Pix Reembolso Michele")
         self.assertEqual(lanc.tipo, TipoTransacao.REEMBOLSO)
         self.assertEqual(lanc.categoria, "Emprestimo cartão")
-        self.assertEqual(lanc.conta_ou_cartao, "Santader Conta")
+        self.assertEqual(lanc.conta_ou_cartao, "Santander Conta")
         self.assertEqual(lanc.mes_competencia, "2026-Novembro")
         self.assertEqual(lanc.pessoa, "Michele")
 
@@ -174,7 +174,7 @@ class TestTelegramBotServicePrevistos(unittest.TestCase):
                 "page_id": "page-123",
                 "descricao": "Aluguel",
                 "valor": Decimal("1200.00"),
-                "conta": "Santader Conta",
+                "conta": "Santander Conta",
                 "data": date(2026, 11, 7),
             }
         ]
@@ -254,7 +254,7 @@ class TestTelegramBotServicePrevistos(unittest.TestCase):
         self.assertEqual(lanc.tipo, TipoTransacao.REEMBOLSO)
         self.assertEqual(lanc.pessoa, "Michele")
         self.assertEqual(lanc.valor, Decimal("145.87"))
-        self.assertEqual(lanc.conta_ou_cartao, "Santader Conta")
+        self.assertEqual(lanc.conta_ou_cartao, "Santander Conta")
 
         chamada = self.mock_telegram.enviar_mensagem.call_args
         self.assertIn("Reembolso Registrado no Notion", chamada[0][0])
@@ -280,6 +280,58 @@ class TestTelegramBotServicePrevistos(unittest.TestCase):
             updates = client.obter_atualizacoes(timeout=0)
             self.assertEqual(len(updates), 1)
             self.assertEqual(mock_req.call_count, 2)
+
+    def test_lancamento_parcelado_texto_atalho_e_dicionario(self) -> None:
+        parser = MensagemGastoParser(
+            conta_padrao="Santander Credito",
+            regras_categorias=(("vestuario", "Vestuário"),),
+        )
+        gasto_5x = parser.parse_mensagem("tenis ; 549,99 ; vestuario ; 5x")
+        self.assertIsNotNone(gasto_5x)
+        assert gasto_5x is not None
+        self.assertEqual(gasto_5x.valor, Decimal("110.00"))
+        self.assertEqual((gasto_5x.parcela_atual, gasto_5x.total_parcelas), (1, 5))
+
+        lanc = parser.criar_lancamento(gasto_5x, data_referencia=date(2026, 11, 12))
+        self.assertEqual(lanc.descricao, "tenis - Parc 01/05")
+        self.assertEqual(lanc.nome_fantasia, "tenis")
+
+        gasto_frac = parser.parse_mensagem("tenis ; 110 ; vestuario ; 02/05")
+        self.assertIsNotNone(gasto_frac)
+        assert gasto_frac is not None
+        self.assertEqual(gasto_frac.valor, Decimal("110"))
+        self.assertEqual((gasto_frac.parcela_atual, gasto_frac.total_parcelas), (2, 5))
+
+        gasto_dict = parser.parse_mensagem(
+            "Item: jaqueta\nValor: 300\nCategoria: Vestuario\nParcelas: 3x"
+        )
+        self.assertIsNotNone(gasto_dict)
+        assert gasto_dict is not None
+        self.assertEqual(gasto_dict.valor, Decimal("100.00"))
+        self.assertEqual((gasto_dict.parcela_atual, gasto_dict.total_parcelas), (1, 3))
+
+    def test_bot_service_projeta_parcelas_futuras_ao_lancar_texto_5x(self) -> None:
+        self.mock_repos.transacoes.criar_lancamento.side_effect = [
+            "p1",
+            "p2",
+            "p3",
+            "p4",
+            "p5",
+        ]
+        self.service._tratar_gasto_texto("tenis ; 500 ; casa ; 5x", chat_id="123456", dry_run=False)
+
+        self.assertEqual(self.mock_repos.transacoes.criar_lancamento.call_count, 5)
+        chamadas = [c[0][0] for c in self.mock_repos.transacoes.criar_lancamento.call_args_list]
+        self.assertEqual([c.descricao for c in chamadas], [
+            "tenis - Parc 01/05",
+            "tenis - Parc 02/05",
+            "tenis - Parc 03/05",
+            "tenis - Parc 04/05",
+            "tenis - Parc 05/05",
+        ])
+        self.assertTrue(all(c.valor == Decimal("100.00") for c in chamadas))
+        msg = self.mock_telegram.enviar_mensagem.call_args[0][0]
+        self.assertIn("01/05 (+4 futura(s) projetada(s))", msg)
 
 
 if __name__ == "__main__":
