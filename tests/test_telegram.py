@@ -311,6 +311,7 @@ class TestTelegramBotServicePrevistos(unittest.TestCase):
         self.assertEqual((gasto_dict.parcela_atual, gasto_dict.total_parcelas), (1, 3))
 
     def test_bot_service_projeta_parcelas_futuras_ao_lancar_texto_5x(self) -> None:
+        self.mock_repos.parcelas.garantir_parcela.return_value = "parcela-mestre-1"
         self.mock_repos.transacoes.criar_lancamento.side_effect = [
             "p1",
             "p2",
@@ -320,6 +321,7 @@ class TestTelegramBotServicePrevistos(unittest.TestCase):
         ]
         self.service._tratar_gasto_texto("tenis ; 500 ; casa ; 5x", chat_id="123456", dry_run=False)
 
+        self.mock_repos.parcelas.garantir_parcela.assert_called_once()
         self.assertEqual(self.mock_repos.transacoes.criar_lancamento.call_count, 5)
         chamadas = [c[0][0] for c in self.mock_repos.transacoes.criar_lancamento.call_args_list]
         self.assertEqual([c.descricao for c in chamadas], [
@@ -330,8 +332,84 @@ class TestTelegramBotServicePrevistos(unittest.TestCase):
             "tenis - Parc 05/05",
         ])
         self.assertTrue(all(c.valor == Decimal("100.00") for c in chamadas))
+        self.assertTrue(all(c.compra_parcelada_id == "parcela-mestre-1" for c in chamadas))
         msg = self.mock_telegram.enviar_mensagem.call_args[0][0]
         self.assertIn("01/05 (+4 futura(s) projetada(s))", msg)
+        self.assertIn("vinculado em 📦 Parcelas", msg)
+
+    def test_comando_investir_debita_conta_e_registra_aporte(self) -> None:
+        from financas.domain.investments import AtivoCarteira
+
+        self.mock_config.databases = MagicMock(
+            aportes="db-aportes",
+            meus_investimentos="db-invest",
+        )
+        self.service._invest_service = MagicMock()
+        self.service._invest_service.resolver_ativo.return_value = AtivoCarteira(
+            id="ativo-ipca",
+            nome="IPCA+",
+            tipo="Renda Fixa - Inflação (IPCA+)",
+            qtd=Decimal("1"),
+            valor_atual=Decimal("3500.00"),
+            valor_investido=Decimal("3508.24"),
+        )
+        self.mock_repos.transacoes.criar_lancamento.return_value = "tx-aporte-1"
+
+        self.service._tratar_comando(
+            "/investir IPCA+ ; 375,13 ; santander conta ; 08/11/2026",
+            chat_id="123456",
+            dry_run=False,
+        )
+
+        self.mock_repos.transacoes.criar_lancamento.assert_called_once()
+        lanc = self.mock_repos.transacoes.criar_lancamento.call_args[0][0]
+        self.assertEqual(lanc.tipo, TipoTransacao.MOVIMENTACAO_INTERNA)
+        self.assertEqual(lanc.valor, Decimal("375.13"))
+        self.assertEqual(lanc.conta_ou_cartao, "Santander Conta")
+        self.assertEqual(lanc.data_compra, date(2026, 11, 8))
+        self.assertEqual(lanc.categoria, "Investimento")
+
+        self.service._invest_service.registrar_aporte.assert_called_once_with(
+            ativo_id="ativo-ipca",
+            ativo_nome="IPCA+",
+            valor_total=Decimal("375.13"),
+            data_aporte=date(2026, 11, 8),
+            quantidade=None,
+            dry_run=False,
+        )
+        msg = self.mock_telegram.enviar_mensagem.call_args[0][0]
+        self.assertIn("Investimento Registrado no Notion", msg)
+        self.assertIn("IPCA+", msg)
+        self.assertIn("375,13", msg)
+
+    def test_parcelas_repository_cria_e_reaproveita_idempotente(self) -> None:
+        from financas.domain.models import LancamentoTransacao, StatusTransacao
+        from financas.notion.repositories.parcelas import ParcelasRepository
+
+        mock_client = MagicMock()
+        mock_client.query_database.return_value = []
+        mock_client.create_page.return_value = {"id": "11111111-1111-1111-1111-111111111111"}
+        mock_catalogo = MagicMock()
+        mock_catalogo.id_conta.return_value = "conta-santander"
+
+        repo = ParcelasRepository(mock_client, "db-parcelas", mock_catalogo)
+        lanc = LancamentoTransacao(
+            descricao="PayU *AD - Parc 01/05",
+            valor=Decimal("110.00"),
+            data_compra=date(2026, 11, 12),
+            mes_competencia="2026-Novembro",
+            tipo=TipoTransacao.SAIDA,
+            categoria="Diversos",
+            conta_ou_cartao="Santander Credito",
+            status=StatusTransacao.REALIZADO,
+            parcela_atual=1,
+            total_parcelas=5,
+        )
+        id_1 = repo.garantir_parcela(lanc)
+        id_2 = repo.garantir_parcela(lanc)
+        self.assertEqual(id_1, "11111111111111111111111111111111")
+        self.assertEqual(id_2, id_1)
+        mock_client.create_page.assert_called_once()
 
 
 if __name__ == "__main__":

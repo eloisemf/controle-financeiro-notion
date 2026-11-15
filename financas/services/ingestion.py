@@ -500,6 +500,16 @@ class FaturaIngestionService:
             ):
                 continue
 
+            if (
+                not dry_run
+                and item.eh_parcelado
+                and not item.compra_parcelada_id
+                and self._repos.parcelas is not None
+            ):
+                parcela_mestre_id = self._repos.parcelas.garantir_parcela(item)
+                if parcela_mestre_id:
+                    item = replace(item, compra_parcelada_id=parcela_mestre_id)
+
             novo_id = (
                 "dry_run_id"
                 if dry_run

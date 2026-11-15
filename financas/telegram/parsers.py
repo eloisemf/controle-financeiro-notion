@@ -113,6 +113,16 @@ class ReembolsoExtraido(NamedTuple):
     conta_destino: str = "Santander Conta"
 
 
+class AporteManualExtraido(NamedTuple):
+    """Dados estruturados extraídos de um comando de investimento (`/investir`) no Telegram."""
+
+    ativo_informado: str
+    valor: Decimal
+    conta_origem: str = "Santander Conta"
+    data_aporte: date | None = None
+    quantidade: Decimal | None = None
+
+
 class MensagemGastoParser:
     """Extrai lançamentos de despesas a partir do template Chave: Valor ou atalho com `;`."""
 
@@ -577,4 +587,96 @@ class MensagemGastoParser:
             recorrencia=Recorrencia.NAO_RECORRENTE,
             status=StatusTransacao.REALIZADO,
             pessoa=nome_oficial_pessoa,
+        )
+
+    def parse_aporte(
+        self,
+        texto: str,
+        conta_padrao_origem: str = "Santander Conta",
+        data_referencia: date | None = None,
+    ) -> AporteManualExtraido | None:
+        """Interpreta `/investir Ativo ; Valor [; Conta] [; dd/mm] [; N cotas]`."""
+        limpo = re.sub(r"^/(?:investir|aporte)\b", "", texto.strip(), flags=re.IGNORECASE).strip()
+        if not limpo:
+            return None
+
+        partes = [p.strip() for p in re.split(r"[;|]", limpo) if p.strip()]
+        if len(partes) < 2:
+            return None
+
+        val_0 = self._extrair_decimal(partes[0]) if self._RE_VALOR_EXATO.match(partes[0]) else None
+        val_1 = self._extrair_decimal(partes[1])
+        if val_1 is not None and not self._RE_VALOR_EXATO.match(partes[0]):
+            ativo_str = partes[0].strip()
+            valor = val_1
+        elif val_0 is not None:
+            valor = val_0
+            ativo_str = partes[1].strip()
+        else:
+            return None
+
+        if not ativo_str or valor is None:
+            return None
+
+        hoje = data_referencia or date.today()
+        conta_origem = conta_padrao_origem
+        data_aporte: date | None = None
+        quantidade: Decimal | None = None
+
+        for extra in partes[2:]:
+            m_dt = re.match(r"^(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?$", extra)
+            if m_dt:
+                dia, mes = int(m_dt.group(1)), int(m_dt.group(2))
+                ano_raw = m_dt.group(3)
+                if ano_raw:
+                    ano = int(ano_raw) if len(ano_raw) == 4 else 2000 + int(ano_raw)
+                else:
+                    ano = hoje.year if mes <= hoje.month else hoje.year - 1
+                try:
+                    data_aporte = date(ano, mes, dia)
+                    continue
+                except ValueError:
+                    pass
+
+            m_qtd = re.match(r"^(?:qtd\s*[:=]?\s*)?(\d+(?:[,\.]\d+)?)\s*(?:cotas?|acoes?|un)?$", extra, re.IGNORECASE)
+            if m_qtd and ("cota" in extra.lower() or "acao" in extra.lower() or "qtd" in extra.lower()):
+                qtd_dec = self._extrair_decimal(m_qtd.group(1))
+                if qtd_dec is not None:
+                    quantidade = qtd_dec
+                    continue
+
+            conta_res = self.resolver_conta(extra)
+            if conta_res.endswith("Credito"):
+                conta_origem = conta_res.replace("Credito", "Conta")
+            else:
+                conta_origem = conta_res
+
+        return AporteManualExtraido(
+            ativo_informado=ativo_str,
+            valor=valor,
+            conta_origem=conta_origem,
+            data_aporte=data_aporte,
+            quantidade=quantidade,
+        )
+
+    def criar_lancamento_aporte(
+        self,
+        aporte: AporteManualExtraido,
+        nome_oficial_ativo: str,
+        data_referencia: date | None = None,
+    ) -> LancamentoTransacao:
+        """Cria a saída de conta (`Movimentação Interna`) para acompanhar o aporte em investimentos."""
+        dt = aporte.data_aporte or data_referencia or date.today()
+        mes_comp = formatar_mes_competencia(dt.year, dt.month)
+        return LancamentoTransacao(
+            descricao=f"Aporte {nome_oficial_ativo}",
+            valor=aporte.valor,
+            data_compra=dt,
+            mes_competencia=mes_comp,
+            tipo=TipoTransacao.MOVIMENTACAO_INTERNA,
+            categoria="Investimento",
+            conta_ou_cartao=aporte.conta_origem,
+            recorrencia=Recorrencia.NAO_RECORRENTE,
+            status=StatusTransacao.REALIZADO,
+            uso_dinheiro=UsoDinheiro.INVESTIMENTO.value,
         )

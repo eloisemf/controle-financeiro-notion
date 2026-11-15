@@ -59,6 +59,23 @@ def parse_mes_competencia(label: str) -> tuple[int, int]:
     return int(partes[0]), MESES_NOMES.index(partes[1]) + 1
 
 
+def formatar_mes_parcelas(ano: int, mes: int) -> str:
+    """Converte `(2026, 11)` para `'novembro/26'` conforme padrão da base `📦 Parcelas`."""
+    if not (1 <= mes <= 12):
+        raise ValueError(f"Mês inválido: {mes}")
+    return f"{MESES_NOMES[mes - 1].lower()}/{ano % 100:02d}"
+
+
+def calcular_inicio_fim_parcelas(
+    mes_competencia: str, parcela_atual: int, total_parcelas: int
+) -> tuple[str, str]:
+    """Calcula os rótulos `Início` e `Fim` (`'mes/aa'`) para a base `📦 Parcelas`."""
+    ano, mes = parse_mes_competencia(mes_competencia)
+    ano_ini, mes_ini = adicionar_meses(ano, mes, -(parcela_atual - 1))
+    ano_fim, mes_fim = adicionar_meses(ano, mes, total_parcelas - parcela_atual)
+    return formatar_mes_parcelas(ano_ini, mes_ini), formatar_mes_parcelas(ano_fim, mes_fim)
+
+
 class CalculadoraFatura:
     """Calcula datas de fechamento, mês de competência da fatura e projeção de parcelas."""
 

@@ -313,6 +313,7 @@ class LancamentoTransacao:
     parcela_atual: int | None = None
     total_parcelas: int | None = None
     gasto_fixo_id: str | None = None
+    compra_parcelada_id: str | None = None
     uso_dinheiro: str | None = None
     pessoa: str | None = None
     valor_a_receber: Decimal | None = None

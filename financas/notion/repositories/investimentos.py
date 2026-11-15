@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
 import logging
 from typing import Any
@@ -12,6 +13,7 @@ from financas.domain.investments import (
     AtivoCarteira,
     SnapshotPatrimonial,
 )
+from financas.domain.models import normalizar_texto_chave
 from financas.notion.builders import NotionParser, NotionPropertyBuilder as Prop
 from financas.notion.client import NotionClient
 from financas.notion.repositories.base import BaseNotionRepository
@@ -221,3 +223,48 @@ class InvestimentosRepository(BaseNotionRepository):
             mes_page_id,
             properties={ColunasMeses.PATRIMONIO_ANTERIOR: Prop.number_decimal(patrimonio_anterior)},
         )
+
+    def resolver_ativo_por_nome(self, termo: str) -> AtivoCarteira | None:
+        """Localiza um ativo ativo em `Meus Investimentos` por nome exato ou substring normalizada."""
+        alvo = normalizar_texto_chave(termo)
+        if not alvo:
+            return None
+        ativos = self.listar_ativos_na_carteira()
+        for ativo in ativos:
+            if normalizar_texto_chave(ativo.nome) == alvo:
+                return ativo
+        for ativo in ativos:
+            nome_norm = normalizar_texto_chave(ativo.nome)
+            if alvo in nome_norm or nome_norm in alvo:
+                return ativo
+        return None
+
+    def criar_aporte(
+        self,
+        nome: str,
+        data_aporte: date,
+        investimento_id: str,
+        quantidade: Decimal,
+        preco_unitario: Decimal,
+        mes_page_id: str | None = None,
+        tipo: str = "Compra / Aporte",
+        taxas: Decimal = Decimal("0.00"),
+        observacao: str = "",
+    ) -> str:
+        """Cria um registro em `📦 Aportes & Movimentações` e retorna o `page_id`."""
+        props: dict[str, Any] = {
+            ColunasAportes.NOME: Prop.title(nome),
+            ColunasAportes.DATA: Prop.date_iso(data_aporte),
+            ColunasAportes.TIPO: Prop.select(tipo),
+            ColunasAportes.INVESTIMENTO: Prop.relation(investimento_id),
+            ColunasAportes.QUANTIDADE: Prop.number_raw(quantidade),
+            ColunasAportes.PRECO_UNITARIO: Prop.number_decimal(preco_unitario),
+            ColunasAportes.TAXAS: Prop.number_decimal(taxas),
+        }
+        if mes_page_id:
+            props[ColunasAportes.MES_COMPETENCIA] = Prop.relation(mes_page_id)
+        if observacao.strip():
+            props[ColunasAportes.OBSERVACAO] = Prop.rich_text(observacao.strip())
+
+        pagina = self._client.create_page(database_id=self._db_ids.aportes, properties=props)
+        return NotionParser.normalize_id(pagina["id"])

@@ -177,6 +177,15 @@ class TestCalculadoraFatura(unittest.TestCase):
             date(2026, 11, 15),
         )
 
+    def test_calcular_inicio_fim_parcelas(self) -> None:
+        from financas.domain.billing import calcular_inicio_fim_parcelas
+
+        ini, fim = calcular_inicio_fim_parcelas("2026-Novembro", 1, 5)
+        self.assertEqual((ini, fim), ("novembro/26", "março/27"))
+
+        ini2, fim2 = calcular_inicio_fim_parcelas("2026-Novembro", 4, 4)
+        self.assertEqual((ini2, fim2), ("agosto/26", "novembro/26"))
+
 
 if __name__ == "__main__":
     unittest.main()

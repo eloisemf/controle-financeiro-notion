@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date
 from decimal import Decimal
 import logging
@@ -10,7 +11,7 @@ import tempfile
 from typing import Any
 
 from financas.config import AppConfig
-from financas.domain.billing import CalculadoraFatura
+from financas.domain.billing import CalculadoraFatura, parse_mes_competencia
 from financas.domain.classification import ClassificadorCategoria
 from financas.notion.client import NotionClient
 from financas.notion.repositories import NotionRepositories
@@ -175,6 +176,7 @@ class TelegramBotService:
                 "• `/reembolso mae ; 200`\n\n"
                 "📸 Você também pode mandar *prints de faturas ou PDFs*!\n\n"
                 "📌 *Comandos disponíveis:*\n"
+                "/investir [ativo] ; [valor] — Registra aporte saindo da conta\n"
                 "/reembolso [nome] ; [valor] — Registra Pix recebido de terceiro\n"
                 "/categorias — Lista todas as categorias e contas aceitas\n"
                 "/modelo — Envia o molde pronto para copiar e colar\n"
@@ -222,6 +224,9 @@ class TelegramBotService:
 
         elif cmd in ("/reembolso", "/recebi", "/pagou", "/pessoas"):
             self._tratar_reembolso(comando, chat_id, dry_run=dry_run)
+
+        elif cmd in ("/investir", "/aporte"):
+            self._tratar_aporte(comando, chat_id, dry_run=dry_run)
 
         elif cmd in ("/confirmar", "/confirmado", "/pago"):
             if len(partes_cmd) < 2:
@@ -388,6 +393,73 @@ class TelegramBotService:
         }
         self._telegram.enviar_mensagem(msg_confirmacao, chat_id=chat_id, reply_markup=botoes)
 
+    def _tratar_aporte(self, comando: str, chat_id: str, dry_run: bool = False) -> None:
+        """Processa `/investir Ativo ; Valor [; Conta] [; dd/mm]`, debita da conta e registra em Aportes."""
+        if not self.config.databases.aportes or not self.config.databases.meus_investimentos:
+            self._telegram.enviar_mensagem(
+                "⚠️ O módulo de Investimentos não está configurado no `.env`.",
+                chat_id=chat_id,
+            )
+            return
+
+        aporte = self._parser.parse_aporte(comando)
+        if not aporte:
+            self._telegram.enviar_mensagem(
+                "📈 *COMO REGISTRAR UM INVESTIMENTO (SAÍDA DA CONTA + APORTE):*\n\n"
+                "Envie no formato:\n"
+                "`/investir Ativo ; Valor [; Conta] [; dd/mm]`\n\n"
+                "💡 *Exemplos:*\n"
+                "• `/investir IPCA+ ; 375,13`\n"
+                "• `/investir IPCA+ ; 375,13 ; santander conta ; 08/11`\n"
+                "• `/investir BBAS3F ; 180,00 ; inter conta ; 10 cotas`\n\n"
+                "ℹ️ *Padrões:* Sai de `Santander Conta` (`Movimentação Interna`) e atualiza `📦 Aportes` + `Meus Investimentos`.",
+                chat_id=chat_id,
+            )
+            return
+
+        ativo = self._invest_service.resolver_ativo(aporte.ativo_informado)
+        if not ativo:
+            self._telegram.enviar_mensagem(
+                f"⚠️ Não encontrei o ativo `'{aporte.ativo_informado}'` em *Meus Investimentos*.\n"
+                "Verifique o nome exato do ativo na sua carteira no Notion.",
+                chat_id=chat_id,
+            )
+            return
+
+        lancamento = self._parser.criar_lancamento_aporte(aporte, nome_oficial_ativo=ativo.nome)
+        tx_page_id = "dry-run-tx-id"
+        if not dry_run:
+            ano_a, mes_a = parse_mes_competencia(lancamento.mes_competencia)
+            self._repos.meses.garantir_mes(ano_a, mes_a)
+            tx_page_id = self._repos.transacoes.criar_lancamento(lancamento)
+            self._invest_service.registrar_aporte(
+                ativo_id=ativo.id,
+                ativo_nome=ativo.nome,
+                valor_total=lancamento.valor,
+                data_aporte=lancamento.data_compra,
+                quantidade=aporte.quantidade,
+                dry_run=False,
+            )
+
+        val_fmt = f"R$ {lancamento.valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        dt_fmt = lancamento.data_compra.strftime("%d/%m/%Y")
+        msg_confirmacao = (
+            "📈 *Investimento Registrado no Notion!*\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"• *Ativo:* *{ativo.nome}*\n"
+            f"• *Valor Aportado:* *{val_fmt}*\n"
+            f"• *Data:* {dt_fmt} ({lancamento.mes_competencia})\n"
+            f"• *Saída da Conta:* {lancamento.conta_ou_cartao} (`Movimentação Interna`)\n"
+            "• *Atualizado:* `Transações` + `📦 Aportes` + `Meus Investimentos`\n"
+            "━━━━━━━━━━━━━━━━━━━━━━"
+        )
+        botoes = {
+            "inline_keyboard": [
+                [{"text": "🗑️ Desfazer Saída da Conta", "callback_data": f"excluir:{tx_page_id}"}]
+            ]
+        }
+        self._telegram.enviar_mensagem(msg_confirmacao, chat_id=chat_id, reply_markup=botoes)
+
     def _tratar_gasto_texto(self, texto: str, chat_id: str, dry_run: bool = False) -> None:
         gasto = self._parser.parse_mensagem(texto)
         if not gasto:
@@ -435,9 +507,21 @@ class TelegramBotService:
         futuras = self._calc.projetar_parcelas_futuras(lancamento) if lancamento.eh_parcelado else []
 
         page_id = "dry-run-id"
+        vinculado_parcelas = False
         if not dry_run:
+            ano_l, mes_l = parse_mes_competencia(lancamento.mes_competencia)
+            self._repos.meses.garantir_mes(ano_l, mes_l)
+            if lancamento.eh_parcelado and self._repos.parcelas is not None:
+                parcela_mestre_id = self._repos.parcelas.garantir_parcela(lancamento)
+                if parcela_mestre_id:
+                    lancamento = replace(lancamento, compra_parcelada_id=parcela_mestre_id)
+                    futuras = [replace(f, compra_parcelada_id=parcela_mestre_id) for f in futuras]
+                    vinculado_parcelas = True
+
             page_id = self._repos.transacoes.criar_lancamento(lancamento)
             for parc_futura in futuras:
+                ano_f, mes_f = parse_mes_competencia(parc_futura.mes_competencia)
+                self._repos.meses.garantir_mes(ano_f, mes_f)
                 self._repos.transacoes.criar_lancamento(parc_futura)
 
         val_fmt = f"R$ {lancamento.valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -445,8 +529,9 @@ class TelegramBotService:
         bloco_parcelas = ""
         if lancamento.eh_parcelado and lancamento.parcela_atual and lancamento.total_parcelas:
             extra_fut = f" (+{len(futuras)} futura(s) projetada(s))" if futuras else ""
+            extra_base = " • vinculado em 📦 Parcelas" if vinculado_parcelas else ""
             bloco_parcelas = (
-                f"• *Parcelamento:* {lancamento.parcela_atual:02d}/{lancamento.total_parcelas:02d}{extra_fut}\n"
+                f"• *Parcelamento:* {lancamento.parcela_atual:02d}/{lancamento.total_parcelas:02d}{extra_fut}{extra_base}\n"
             )
         msg_confirmacao = (
             "✅ *Despesa Registrada no Notion!*\n"

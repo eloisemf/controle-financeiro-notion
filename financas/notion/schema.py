@@ -19,6 +19,20 @@ class ColunasTransacoes:
     TIPO_SAIDA = "Tipo Saida"
     GASTO_FIXO = "Gasto Fixo"
     PESSOA = "Pessoa"
+    COMPRA_PARCELADA = "Compra Parcelada"
+
+
+class ColunasParcelas:
+    GASTO = "Gasto"
+    DE_QUEM = "De Quem"
+    PARCELA_ATUAL = "Parcela Atual"
+    TOTAL_PARCELAS = "Total Parcelas"
+    VALOR_PARCELA = "Valor Parcela"
+    INICIO = "Início"
+    FIM = "Fim"
+    CARTAO = "Cartão"
+    TRANSACOES = "Transações"
+    OBS = "Obs"
 
 
 class ColunasMeses:

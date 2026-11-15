@@ -15,6 +15,7 @@ from financas.notion.repositories.catalogo import CatalogoRepository
 from financas.notion.repositories.gastos_fixos import GastosFixosRepository
 from financas.notion.repositories.investimentos import InvestimentosRepository
 from financas.notion.repositories.meses import MesesRepository
+from financas.notion.repositories.parcelas import ParcelasRepository
 from financas.notion.repositories.pessoas import PessoasRepository
 from financas.notion.repositories.transacoes import TransacoesRepository
 
@@ -29,6 +30,7 @@ class NotionRepositories:
     gastos_fixos: GastosFixosRepository
     transacoes: TransacoesRepository
     investimentos: InvestimentosRepository | None = None
+    parcelas: ParcelasRepository | None = None
 
     @classmethod
     def from_client(cls, client: NotionClient, config: AppConfig) -> NotionRepositories:
@@ -42,6 +44,11 @@ class NotionRepositories:
             client, config.databases.transacoes, catalogo, meses, pessoas
         )
         investimentos = InvestimentosRepository(client, config.databases)
+        parcelas = (
+            ParcelasRepository(client, config.databases.parcelas, catalogo)
+            if config.databases.parcelas
+            else None
+        )
         return cls(
             catalogo=catalogo,
             meses=meses,
@@ -49,6 +56,7 @@ class NotionRepositories:
             gastos_fixos=gastos_fixos,
             transacoes=transacoes,
             investimentos=investimentos,
+            parcelas=parcelas,
         )
 
 
@@ -59,6 +67,7 @@ __all__ = [
     "InvestimentosRepository",
     "MesesRepository",
     "NotionRepositories",
+    "ParcelasRepository",
     "PessoasRepository",
     "TransacoesRepository",
     "renomear_coluna_relacao",

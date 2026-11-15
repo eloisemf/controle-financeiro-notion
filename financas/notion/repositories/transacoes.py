@@ -354,6 +354,8 @@ class TransacoesRepository(BaseNotionRepository):
 
         if lancamento.gasto_fixo_id:
             props[ColunasTransacoes.GASTO_FIXO] = Prop.relation(lancamento.gasto_fixo_id)
+        if lancamento.compra_parcelada_id:
+            props[ColunasTransacoes.COMPRA_PARCELADA] = Prop.relation(lancamento.compra_parcelada_id)
         if lancamento.uso_dinheiro:
             props[ColunasTransacoes.TIPO_SAIDA] = Prop.relation(self._catalogo.id_uso_dinheiro(lancamento.uso_dinheiro))
         if lancamento.valor_a_receber is not None:

@@ -304,3 +304,42 @@ class InvestimentosService:
             "atualizados": qtd_atualizados,
             "snapshots": created_snaps,
         }
+
+    def resolver_ativo(self, termo: str):
+        """Localiza um ativo na carteira pelo nome ou parte dele."""
+        return self._investimentos_repo.resolver_ativo_por_nome(termo)
+
+    def registrar_aporte(
+        self,
+        ativo_id: str,
+        ativo_nome: str,
+        valor_total: Decimal,
+        data_aporte: datetime.date,
+        quantidade: Decimal | None = None,
+        dry_run: bool = False,
+    ) -> str:
+        """Grava um aporte em `📦 Aportes & Movimentações` e sincroniza a posição na carteira."""
+        qtd = quantidade if (quantidade and quantidade > Decimal("0")) else Decimal("1")
+        pu = (valor_total / qtd).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+        if dry_run:
+            return "dry-run-aporte-id"
+
+        mes_page_id = self._meses_repo.garantir_mes(data_aporte.year, data_aporte.month)
+        aporte_id = self._investimentos_repo.criar_aporte(
+            nome=f"Aporte {ativo_nome}",
+            data_aporte=data_aporte,
+            investimento_id=ativo_id,
+            quantidade=qtd,
+            preco_unitario=pu,
+            mes_page_id=mes_page_id,
+        )
+        try:
+            self.sincronizar_aportes_carteira(dry_run=False)
+        except Exception as exc:
+            logger.warning("Falha ao sincronizar aportes após registro: %s", exc)
+        try:
+            self.atualizar_cotacoes_carteira(dry_run=False)
+        except Exception as exc:
+            logger.warning("Falha ao atualizar cotações após registro: %s", exc)
+        return aporte_id
