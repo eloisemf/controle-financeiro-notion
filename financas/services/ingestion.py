@@ -354,25 +354,52 @@ class FaturaIngestionService:
         cls,
         chave: ChaveIdempotencia,
         chaves_mes: dict[ChaveIdempotencia, str],
+        tolerancia_dias: int = 1,
     ) -> ChaveIdempotencia | None:
-        """Detecta duplicidade quando o OCR leu o mesmo gasto com pequena variação de texto."""
-        desc_alvo = re.sub(r"[^a-z0-9]", "", chave.descricao_norm)
+        """Detecta duplicidade quando o OCR/fatura varia texto, ±1 dia ou centavos de parcela."""
+        re_parc = re.compile(r"\s*-\s*parc\s+(\d{2}/\d{2})$")
+        m_alvo = re_parc.search(chave.descricao_norm)
+        parc_alvo = m_alvo.group(1) if m_alvo else None
+        base_alvo = re_parc.sub("", chave.descricao_norm)
+        desc_alvo = re.sub(r"[^a-z0-9]", "", base_alvo).replace("0", "o")
         if len(desc_alvo) < 4:
+            return None
+
+        try:
+            data_alvo = date.fromisoformat(chave.data_iso)
+        except ValueError:
             return None
 
         for k in chaves_mes:
             if (
                 not k.descricao_norm
-                or k.centavos != chave.centavos
                 or k.mes_competencia != chave.mes_competencia
-                or k.data_iso != chave.data_iso
                 or not cls._contas_equivalentes(k.conta_norm, chave.conta_norm)
             ):
                 continue
-            desc_k = re.sub(r"[^a-z0-9]", "", k.descricao_norm)
+
+            m_k = re_parc.search(k.descricao_norm)
+            parc_k = m_k.group(1) if m_k else None
+            if parc_alvo != parc_k:
+                continue
+
+            tol_centavos = 5 if parc_alvo is not None else 0
+            if abs(k.centavos - chave.centavos) > tol_centavos:
+                continue
+
+            try:
+                if abs((date.fromisoformat(k.data_iso) - data_alvo).days) > tolerancia_dias:
+                    continue
+            except ValueError:
+                continue
+
+            base_k = re_parc.sub("", k.descricao_norm)
+            desc_k = re.sub(r"[^a-z0-9]", "", base_k).replace("0", "o")
             if len(desc_k) < 4:
                 continue
             if desc_k.startswith(desc_alvo) or desc_alvo.startswith(desc_k):
+                return k
+            if len(desc_k) >= 7 and len(desc_alvo) >= 7 and desc_k[:7] == desc_alvo[:7]:
                 return k
             if SequenceMatcher(None, desc_k, desc_alvo).ratio() >= 0.72:
                 return k

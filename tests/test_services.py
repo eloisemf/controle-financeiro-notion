@@ -499,6 +499,70 @@ class TestServicesAndDryRun(unittest.TestCase):
         self.assertIn("Conta de Luz", relatorio.alertas_variacao_fixos[0])
         self.assertIn("+40.0%", relatorio.formatar_resumo())
 
+    def test_buscar_chave_ocr_equivalente_tolera_um_dia_e_arredondamento_parcela(self) -> None:
+        from financas.domain.models import ChaveIdempotencia
+        from financas.services.ingestion import FaturaIngestionService
+
+        chaves_mes = {
+            ChaveIdempotencia(
+                data_iso="2026-11-11",
+                centavos=3875,
+                conta_norm="santander credito",
+                mes_competencia="2026-novembro",
+                descricao_norm="shopee *hlcamiseta",
+            ): "p1",
+            ChaveIdempotencia(
+                data_iso="2026-11-12",
+                centavos=3990,
+                conta_norm="santander credito",
+                mes_competencia="2026-novembro",
+                descricao_norm="shopee *d0afubi",
+            ): "p2",
+            ChaveIdempotencia(
+                data_iso="2026-11-11",
+                centavos=11000,
+                conta_norm="santander credito",
+                mes_competencia="2026-novembro",
+                descricao_norm="payu *ad - parc 01/05",
+            ): "p3",
+        }
+        self.assertIsNotNone(
+            FaturaIngestionService._buscar_chave_ocr_equivalente(
+                ChaveIdempotencia(
+                    data_iso="2026-11-10",
+                    centavos=3875,
+                    conta_norm="santander credito",
+                    mes_competencia="2026-novembro",
+                    descricao_norm="shopee *hlcamiseta",
+                ),
+                chaves_mes,
+            )
+        )
+        self.assertIsNotNone(
+            FaturaIngestionService._buscar_chave_ocr_equivalente(
+                ChaveIdempotencia(
+                    data_iso="2026-11-11",
+                    centavos=3990,
+                    conta_norm="santander credito",
+                    mes_competencia="2026-novembro",
+                    descricao_norm="shopee *doafutilidades",
+                ),
+                chaves_mes,
+            )
+        )
+        self.assertIsNotNone(
+            FaturaIngestionService._buscar_chave_ocr_equivalente(
+                ChaveIdempotencia(
+                    data_iso="2026-11-11",
+                    centavos=11003,
+                    conta_norm="santander credito",
+                    mes_competencia="2026-novembro",
+                    descricao_norm="payu *adidas - parc 01/05",
+                ),
+                chaves_mes,
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
