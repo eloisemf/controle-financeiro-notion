@@ -44,6 +44,21 @@ def adicionar_meses(ano: int, mes: int, delta: int) -> tuple[int, int]:
     return indice_total // 12, (indice_total % 12) + 1
 
 
+def competencia_ciclo_atual(data_ref: date, dia_virada: int = 25) -> tuple[int, int]:
+    """Retorna `(ano, mes)` do ciclo financeiro vigente pela regra de virada no dia `dia_virada`."""
+    if data_ref.day >= dia_virada:
+        return adicionar_meses(data_ref.year, data_ref.month, 1)
+    return data_ref.year, data_ref.month
+
+
+def dias_restantes_ciclo(data_ref: date, dia_virada: int = 25) -> int:
+    """Retorna os dias restantes até o próximo dia de virada do ciclo (mínimo 1)."""
+    ano_fim, mes_fim = competencia_ciclo_atual(data_ref, dia_virada=dia_virada)
+    ultimo_dia = calendar.monthrange(ano_fim, mes_fim)[1]
+    fim_ciclo = date(ano_fim, mes_fim, min(dia_virada, ultimo_dia))
+    return max(1, (fim_ciclo - data_ref).days)
+
+
 def formatar_mes_competencia(ano: int, mes: int) -> str:
     """Converte `(2026, 11)` para `'2026-Novembro'`."""
     if not (1 <= mes <= 12):

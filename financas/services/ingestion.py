@@ -73,6 +73,7 @@ class IngestionReport:
     conciliados_previsto_para_realizado: list[str] = field(default_factory=list)
     religados_ao_mes: list[str] = field(default_factory=list)
     ignorados_por_idempotencia: list[str] = field(default_factory=list)
+    alertas_variacao_fixos: list[str] = field(default_factory=list)
 
     @property
     def tem_alteracoes(self) -> bool:
@@ -105,6 +106,11 @@ class IngestionReport:
                 f"{self.ignorados_por_idempotencia}"
             ),
         ]
+        if self.alertas_variacao_fixos:
+            linhas.append(
+                f"[!] Alertas de variação em gastos fixos ({len(self.alertas_variacao_fixos)}): "
+                f"{self.alertas_variacao_fixos}"
+            )
         return "\n".join(linhas)
 
 
@@ -257,6 +263,14 @@ class FaturaIngestionService:
                     item.data_compra.isoformat(),
                 )
                 relatorio.conciliados_previsto_para_realizado.append(resumo_fixo)
+                valor_previsto = fixo_match.valor_lancamento_para_competencia(ano, mes)
+                if valor_previsto > Decimal("0.00"):
+                    diferenca = item.valor - valor_previsto
+                    variacao_pct = (diferenca / valor_previsto) * Decimal("100")
+                    if diferenca >= Decimal("10.00") and variacao_pct >= Decimal("15"):
+                        relatorio.alertas_variacao_fixos.append(
+                            f"{fixo_match.nome}: previsto R$ {valor_previsto:.2f} -> veio R$ {item.valor:.2f} (+{variacao_pct:.1f}%)"
+                        )
                 return item, True
             if data_iso == item.data_compra.isoformat():
                 relatorio.ignorados_por_idempotencia.append(resumo_fixo)
@@ -311,11 +325,17 @@ class FaturaIngestionService:
         except ValueError:
             return None
 
+        sufixo_parcela_match = re.search(r"- parc \d{2}/\d{2}$", chave.descricao_norm)
+        sufixo_parcela = sufixo_parcela_match.group(0) if sufixo_parcela_match else None
+
         melhor: ChaveIdempotencia | None = None
         menor_diff: int | None = None
         for k in chaves_mes:
+            descricao_compativel = k.descricao_norm == "" or (
+                sufixo_parcela is not None and k.descricao_norm.endswith(sufixo_parcela)
+            )
             if (
-                k.descricao_norm == ""
+                descricao_compativel
                 and k.centavos == chave.centavos
                 and k.mes_competencia == chave.mes_competencia
                 and cls._contas_equivalentes(k.conta_norm, chave.conta_norm)

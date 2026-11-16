@@ -21,6 +21,10 @@ TESOURO_CSV_URL = (
     "df56aa42-484a-4a59-8184-7676580c81e3/resource/"
     "796d2059-14e9-44e3-80c9-2d9e30b405c1/download/precotaxatesourodireto.csv"
 )
+BCB_CDI_SGS_URL = (
+    "https://api.bcb.gov.br/dados/serie/bcdata.sgs.12/dados"
+    "?formato=json&dataInicial={inicio}&dataFinal={fim}"
+)
 
 
 class MarketDataService:
@@ -184,3 +188,54 @@ class MarketDataService:
                 if chave.startswith(prefixo) and chave.endswith(f"/{ano_alvo}"):
                     return cotacao
         return None
+
+    def obter_cdi_acumulado(
+        self,
+        data_inicio: date,
+        data_fim: date | None = None,
+        fator_cdi: Decimal = Decimal("1.0"),
+    ) -> Decimal | None:
+        """Consulta a série 12 do BCB SGS (CDI diário) e retorna o retorno acumulado no período."""
+        fim = data_fim or date.today()
+        url = BCB_CDI_SGS_URL.format(
+            inicio=data_inicio.strftime("%d/%m/%Y"),
+            fim=fim.strftime("%d/%m/%Y"),
+        )
+        try:
+            resp = self._session.get(
+                url,
+                headers={"Accept": "application/json"},
+                timeout=self._timeout_s,
+            )
+            if resp.status_code != 200:
+                logger.warning("HTTP %d ao consultar CDI no BCB SGS.", resp.status_code)
+                return None
+            dados = resp.json()
+            if not isinstance(dados, list):
+                return None
+
+            fator_acumulado = Decimal("1")
+            encontrou = False
+            for item in dados:
+                dt_str = str(item.get("data", "")).strip()
+                val_str = str(item.get("valor", "")).strip().replace(",", ".")
+                ano, mes, dia = self._parse_dma(dt_str)
+                if ano == 0:
+                    continue
+                dt_item = date(ano, mes, dia)
+                if data_inicio <= dt_item <= fim:
+                    taxa_diaria = (Decimal(val_str) / Decimal("100")) * fator_cdi
+                    fator_acumulado *= Decimal("1") + taxa_diaria
+                    encontrou = True
+
+            if not encontrou:
+                return None
+            return (fator_acumulado - Decimal("1")).quantize(Decimal("0.000001"))
+        except (requests.RequestException, ValueError, KeyError) as exc:
+            logger.warning("Falha ao consultar CDI acumulado no BCB: %s", exc)
+            return None
+
+    def obter_cdi_mes_atual(self, data_ref: date | None = None) -> Decimal | None:
+        """Retorna o CDI acumulado do dia 1 do mês de referência até `data_ref`."""
+        hoje = data_ref or date.today()
+        return self.obter_cdi_acumulado(date(hoje.year, hoje.month, 1), hoje)

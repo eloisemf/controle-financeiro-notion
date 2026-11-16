@@ -84,6 +84,7 @@ class SetupReport:
     coluna_lancamentos_renomeada: bool = False
     coluna_pessoas_transacoes_renomeada: bool = False
     formulas_meses_faltantes: list[str] = field(default_factory=list)
+    formulas_meses_criadas: list[str] = field(default_factory=list)
     meses_criados: list[str] = field(default_factory=list)
     intervalo_meses_verificado: str = ""
     gastos_fixos_criados: list[str] = field(default_factory=list)
@@ -184,7 +185,10 @@ class WorkspaceSetupService:
             self._repos.pessoas.renomear_coluna_relacao_transacoes(pessoas_id)
         )
 
-        # 4. Verificar fórmulas da tabela Meses
+        # 4. Verificar e garantir fórmulas da tabela Meses
+        relatorio.formulas_meses_criadas = (
+            self._repos.meses.garantir_formulas_analiticas()
+        )
         relatorio.formulas_meses_faltantes = (
             self._repos.meses.verificar_formulas_faltantes(self._cartoes)
         )

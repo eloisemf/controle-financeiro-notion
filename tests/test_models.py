@@ -13,7 +13,7 @@ from financas.domain.models import (
     TipoTransacao,
     para_decimal,
 )
-from financas.notion.builders import NotionPropertyBuilder
+from financas.notion.builders import NotionParser, NotionPropertyBuilder
 
 
 class TestDomainModels(unittest.TestCase):
@@ -24,8 +24,22 @@ class TestDomainModels(unittest.TestCase):
     def test_para_decimal_aceita_string_br_e_decimal(self) -> None:
         self.assertEqual(para_decimal("R$ 1.234,56"), Decimal("1234.56"))
         self.assertEqual(para_decimal("1.234"), Decimal("1234.00"))
+        self.assertEqual(para_decimal("0.665"), Decimal("0.67"))
+        self.assertEqual(para_decimal("-0.665"), Decimal("-0.67"))
         self.assertEqual(para_decimal("10,89"), Decimal("10.89"))
         self.assertEqual(para_decimal(Decimal("10.895")), Decimal("10.90"))
+
+    def test_notion_parser_prop_decimal_preserva_tres_casas_json(self) -> None:
+        pagina = {
+            "properties": {
+                "Acompanhamento": {"type": "formula", "formula": {"type": "number", "number": 0.665}},
+                "Excesso": {"type": "formula", "formula": {"type": "number", "number": 1.755}},
+                "Taxa": {"type": "number", "number": 1.234},
+            }
+        }
+        self.assertEqual(NotionParser.prop_decimal(pagina, "Acompanhamento"), Decimal("0.67"))
+        self.assertEqual(NotionParser.prop_decimal(pagina, "Excesso"), Decimal("1.76"))
+        self.assertEqual(NotionParser.prop_decimal(pagina, "Taxa"), Decimal("1.23"))
 
     def test_chave_idempotencia_normaliza_espacos_e_acentos(self) -> None:
         t1 = LancamentoTransacao(
@@ -111,6 +125,13 @@ class TestDomainModels(unittest.TestCase):
             regra_cel.corresponde("LOJA*ELETRONICOS 11/12", "Inter Credito")
         )
         self.assertEqual(regra_cel.valor_a_receber, Decimal("100.00"))
+
+    def test_formatar_brl(self) -> None:
+        from financas.domain.models import formatar_brl
+
+        self.assertEqual(formatar_brl(Decimal("1511.82")), "R$ 1.511,82")
+        self.assertEqual(formatar_brl(Decimal("-44.2")), "-R$ 44,20")
+        self.assertEqual(formatar_brl(Decimal("0.00"), com_simbolo=False), "0,00")
 
 
 if __name__ == "__main__":

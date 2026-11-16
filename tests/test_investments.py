@@ -297,6 +297,79 @@ class TestInvestimentosService(unittest.TestCase):
         # Rendimento = 14536.82 - 11900.00 - 2500.00 = +136.82
         self.assertEqual(res["rendimento_mes"], Decimal("136.82"))
 
+    def test_registrar_aporte_desempacota_tupla_garantir_mes(self) -> None:
+        self.service._meses_repo.garantir_mes = MagicMock(return_value=("mes-nov-id", True))
+        self.service._investimentos_repo.criar_aporte = MagicMock(return_value="aporte-123")
+        self.service.sincronizar_aportes_carteira = MagicMock()
+        self.service.atualizar_cotacoes_carteira = MagicMock()
+
+        aporte_id = self.service.registrar_aporte(
+            ativo_id="ativo-ipca",
+            ativo_nome="IPCA+",
+            valor_total=Decimal("500.00"),
+            data_aporte=date(2026, 11, 15),
+            dry_run=False,
+        )
+
+        self.assertEqual(aporte_id, "aporte-123")
+        self.service._investimentos_repo.criar_aporte.assert_called_once_with(
+            nome="Aporte IPCA+",
+            data_aporte=date(2026, 11, 15),
+            investimento_id="ativo-ipca",
+            quantidade=Decimal("1"),
+            preco_unitario=Decimal("500.00"),
+            mes_page_id="mes-nov-id",
+        )
+
+    def test_market_data_obter_cdi_acumulado_bcb_sgs(self) -> None:
+        from unittest.mock import patch
+
+        mkt = MarketDataService()
+        resp = MagicMock(
+            status_code=200,
+            json=MagicMock(
+                return_value=[
+                    {"data": "01/11/2026", "valor": "0.050000"},
+                    {"data": "04/11/2026", "valor": "0.050000"},
+                    {"data": "31/10/2026", "valor": "0.050000"},
+                ]
+            ),
+        )
+        with patch.object(mkt._session, "get", return_value=resp):
+            cdi = mkt.obter_cdi_acumulado(date(2026, 11, 1), date(2026, 11, 15))
+        mkt.close()
+        self.assertEqual(cdi, Decimal("0.001000"))
+
+    def test_sincronizar_aportes_do_mes_ignora_realocacao_no_total_novo(self) -> None:
+        from financas.domain.investments import TipoOperacaoInvestimento
+
+        self.mock_client.query_database.return_value = [
+            {
+                "id": "ap-1",
+                "properties": {
+                    "Data": {"date": {"start": "2026-11-05"}},
+                    "Tipo": {"select": {"name": TipoOperacaoInvestimento.COMPRA.value}},
+                    "Quantidade": {"number": 1},
+                    "Preço Unitário": {"number": 1000.00},
+                    "Taxas / Custos": {"number": 0},
+                    "Mês de Competência": {"relation": [{"id": "mes-nov"}]},
+                },
+            },
+            {
+                "id": "ap-2",
+                "properties": {
+                    "Data": {"date": {"start": "2026-11-10"}},
+                    "Tipo": {"select": {"name": TipoOperacaoInvestimento.REALOCACAO.value}},
+                    "Quantidade": {"number": 1},
+                    "Preço Unitário": {"number": 2500.00},
+                    "Taxas / Custos": {"number": 0},
+                    "Mês de Competência": {"relation": [{"id": "mes-nov"}]},
+                },
+            },
+        ]
+        total = self.service._investimentos_repo.sincronizar_aportes_do_mes(2026, 11, "mes-nov")
+        self.assertEqual(total, Decimal("1000.00"))
+
 
 if __name__ == "__main__":
     unittest.main()

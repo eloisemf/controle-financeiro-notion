@@ -40,7 +40,7 @@ def para_decimal(valor: Decimal | int | str | None) -> Decimal | None:
             limpo = limpo.replace(".", "").replace(",", ".")
         elif "," in limpo:
             limpo = limpo.replace(",", ".")
-        elif re.match(r"^-?\d{1,3}(\.\d{3})+$", limpo):
+        elif re.match(r"^-?[1-9]\d{0,2}(\.\d{3})+$", limpo):
             limpo = limpo.replace(".", "")
         if not limpo:
             return None
@@ -59,6 +59,19 @@ def decimal_para_centavos(valor: Decimal | int | str | None) -> int:
     if dec is None:
         return 0
     return int((dec * 100).to_integral_exact(rounding=ROUND_HALF_UP))
+
+
+def formatar_brl(valor: Decimal | int | float, com_simbolo: bool = True) -> str:
+    """Formata um valor numérico no padrão monetário brasileiro (ex.: `R$ 1.511,82`)."""
+    dec = (
+        valor
+        if isinstance(valor, Decimal)
+        else Decimal(str(valor))
+    ).quantize(CENTAVO, rounding=ROUND_HALF_UP)
+    sinal = "-" if dec < 0 else ""
+    corpo = f"{abs(dec):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    prefixo = "R$ " if com_simbolo else ""
+    return f"{sinal}{prefixo}{corpo}"
 
 
 def normalizar_texto_chave(texto: str) -> str:

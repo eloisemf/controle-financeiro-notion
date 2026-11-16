@@ -349,6 +349,156 @@ class TestServicesAndDryRun(unittest.TestCase):
                     client.get_me()
                 self.assertEqual(ctx.exception.status_code, 400)
 
+    def test_buscar_chave_telegram_manual_concilia_parcelado(self) -> None:
+        from financas.domain.models import ChaveIdempotencia
+        from financas.services.ingestion import FaturaIngestionService
+
+        chave_manual_parc = ChaveIdempotencia(
+            data_iso="2026-11-12",
+            centavos=11000,
+            conta_norm="santander credito",
+            mes_competencia="2026-novembro",
+            descricao_norm="tenis - parc 01/05",
+        )
+        chave_fatura_parc = ChaveIdempotencia(
+            data_iso="2026-11-12",
+            centavos=11000,
+            conta_norm="santander credito",
+            mes_competencia="2026-novembro",
+            descricao_norm="payu *ad - parc 01/05",
+        )
+        chave_outra_parcela = ChaveIdempotencia(
+            data_iso="2026-11-12",
+            centavos=11000,
+            conta_norm="santander credito",
+            mes_competencia="2026-novembro",
+            descricao_norm="tenis - parc 02/05",
+        )
+
+        chaves_mes = {chave_manual_parc: "page-manual-parc"}
+        encontrada = FaturaIngestionService._buscar_chave_telegram_manual(
+            chave_fatura_parc,
+            chaves_mes,
+        )
+        self.assertEqual(encontrada, chave_manual_parc)
+
+        nao_encontrada = FaturaIngestionService._buscar_chave_telegram_manual(
+            chave_outra_parcela,
+            chaves_mes,
+        )
+        self.assertIsNone(nao_encontrada)
+
+    def test_transacoes_repository_listar_previstos_periodo(self) -> None:
+        from financas.notion.repositories.transacoes import TransacoesRepository
+
+        mock_client = MagicMock()
+        mock_client.query_database.return_value = [
+            {
+                "id": "tx-1",
+                "properties": {
+                    "Name": {"title": [{"plain_text": "Internet"}]},
+                    "Valor": {"number": 120.0},
+                    "Criado em": {"date": {"start": "2026-11-18"}},
+                    "Saida de": {"relation": [{"id": "conta-1"}]},
+                },
+            },
+            {
+                "id": "tx-2",
+                "properties": {
+                    "Name": {"title": [{"plain_text": "Fora do periodo"}]},
+                    "Valor": {"number": 50.0},
+                    "Criado em": {"date": {"start": "2026-11-29"}},
+                    "Saida de": {"relation": []},
+                },
+            },
+        ]
+        mock_catalogo = MagicMock()
+        mock_catalogo.nome_conta_por_id.return_value = "Santander Conta"
+        repo = TransacoesRepository(
+            client=mock_client,
+            database_id="db-tx",
+            catalogo=mock_catalogo,
+            meses_repo=MagicMock(),
+        )
+        itens = repo.listar_previstos_periodo("mes-nov", date(2026, 11, 15), date(2026, 11, 25))
+        self.assertEqual(len(itens), 1)
+        self.assertEqual(itens[0]["nome"], "Internet")
+        self.assertEqual(itens[0]["valor"], Decimal("120.00"))
+        self.assertEqual(itens[0]["conta"], "Santander Conta")
+        self.assertEqual(itens[0]["data"], date(2026, 11, 18))
+
+    def test_meses_repository_garantir_formulas_analiticas_cria_faltantes(self) -> None:
+        from financas.notion.repositories.meses import MesesRepository
+
+        mock_client = MagicMock()
+        mock_client.get_database.return_value = {
+            "properties": {
+                "Name": {"title": {}},
+                "Total Faturas Cartões": {"formula": {}},
+            }
+        }
+        repo = MesesRepository(mock_client, "db-meses")
+        criadas = repo.garantir_formulas_analiticas()
+
+        self.assertNotIn("Total Faturas Cartões", criadas)
+        self.assertEqual(criadas, ["Taxa de Poupança (%)"])
+        mock_client.update_database.assert_called_once()
+
+    def test_ingestion_alerta_variacao_gasto_fixo_acima_de_15_por_cento(self) -> None:
+        from financas.config import AppConfig, NotionDatabaseIds
+        from financas.domain.models import (
+            GastoFixo,
+            LancamentoTransacao,
+            StatusTransacao,
+            TipoTransacao,
+        )
+        from financas.services.ingestion import FaturaIngestionService, IngestionReport
+        from financas.notion.repositories.transacoes import VinculoGastoFixo
+
+        mock_repos = MagicMock()
+        servico = FaturaIngestionService(
+            client=MagicMock(),
+            config=AppConfig(notion_token="t", databases=NotionDatabaseIds()),
+            repos=mock_repos,
+        )
+        fixo = GastoFixo(
+            page_id="gf-luz",
+            nome="Conta de Luz",
+            nome_na_fatura="ENEL",
+            valor_meu=Decimal("100.00"),
+            valor_cobrado=Decimal("100.00"),
+            categoria="Luz",
+            pago_com="Santander Conta",
+        )
+        item = LancamentoTransacao(
+            descricao="ENEL DISTRIBUICAO",
+            valor=Decimal("140.00"),
+            data_compra=date(2026, 11, 10),
+            mes_competencia="2026-Novembro",
+            tipo=TipoTransacao.SAIDA,
+            categoria="Luz",
+            conta_ou_cartao="Santander Conta",
+            status=StatusTransacao.REALIZADO,
+        )
+        relatorio = IngestionReport(dry_run=True)
+        vinculos = {"gf-luz": VinculoGastoFixo("tx-prev", StatusTransacao.PREVISTO.value, "2026-11-10")}
+
+        _, resolvido = servico._tentar_conciliar_gasto_fixo(
+            item=item,
+            fixo_match=fixo,
+            ano=2026,
+            mes=11,
+            chave_bruta=item.chave_idempotencia,
+            chaves_mes={},
+            vinculos_mes=vinculos,
+            relatorio=relatorio,
+            dry_run=True,
+        )
+        self.assertTrue(resolvido)
+        self.assertEqual(len(relatorio.alertas_variacao_fixos), 1)
+        self.assertIn("Conta de Luz", relatorio.alertas_variacao_fixos[0])
+        self.assertIn("+40.0%", relatorio.formatar_resumo())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -186,6 +186,20 @@ class TestCalculadoraFatura(unittest.TestCase):
         ini2, fim2 = calcular_inicio_fim_parcelas("2026-Novembro", 4, 4)
         self.assertEqual((ini2, fim2), ("agosto/26", "novembro/26"))
 
+    def test_competencia_e_dias_restantes_ciclo_dia_25(self) -> None:
+        from financas.domain.billing import competencia_ciclo_atual, dias_restantes_ciclo
+
+        self.assertEqual(competencia_ciclo_atual(date(2026, 11, 15)), (2026, 11))
+        self.assertEqual(dias_restantes_ciclo(date(2026, 11, 15)), 10)
+
+        self.assertEqual(competencia_ciclo_atual(date(2026, 11, 24)), (2026, 11))
+        self.assertEqual(dias_restantes_ciclo(date(2026, 11, 24)), 1)
+
+        self.assertEqual(competencia_ciclo_atual(date(2026, 11, 25)), (2026, 12))
+        self.assertEqual(dias_restantes_ciclo(date(2026, 11, 25)), 30)
+
+        self.assertEqual(competencia_ciclo_atual(date(2026, 12, 26)), (2027, 1))
+
 
 if __name__ == "__main__":
     unittest.main()

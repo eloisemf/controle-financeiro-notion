@@ -11,7 +11,11 @@ import sys
 from typing import Callable, Protocol
 
 from financas.config import AppConfig
-from financas.domain.billing import formatar_mes_competencia, parse_mes_competencia
+from financas.domain.billing import (
+    competencia_ciclo_atual,
+    formatar_mes_competencia,
+    parse_mes_competencia,
+)
 from financas.domain.investments import ResumoCarteira
 from financas.notion.client import NotionClient
 from financas.notion.repositories import NotionRepositories
@@ -126,7 +130,8 @@ def construir_parser_fixos(
     subparser: argparse.ArgumentParser | None = None,
 ) -> argparse.ArgumentParser:
     hoje = date.today()
-    mes_atual_default = formatar_mes_competencia(hoje.year, hoje.month)
+    ano_ciclo, mes_ciclo = competencia_ciclo_atual(hoje)
+    mes_atual_default = formatar_mes_competencia(ano_ciclo, mes_ciclo)
     parser = subparser or argparse.ArgumentParser(
         description="Lança os Gastos Fixos ativos como 'Previsto' para um mês de competência."
     )
@@ -411,23 +416,25 @@ def executar_telegram(args: argparse.Namespace) -> None:
 
     config = AppConfig.from_env()
     with NotionClient(token=config.notion_token) as client:
-        bot_service = TelegramBotService(config=config, client=client)
+        with TelegramBotService(config=config, client=client) as bot_service:
+            if getattr(args, "semanal", False):
+                logger.info("Executando rotina semanal do Telegram...")
+                resumo = bot_service.disparar_resumo_semanal(dry_run=args.dry_run)
+                if args.dry_run:
+                    print(resumo)
+                else:
+                    print("✅ Resumo semanal enviado com sucesso para o Telegram!")
 
-        if getattr(args, "semanal", False):
-            logger.info("Executando rotina semanal do Telegram...")
-            bot_service.disparar_resumo_semanal()
-            print("✅ Resumo semanal enviado com sucesso para o Telegram!")
+            if getattr(args, "checar_previstos", False):
+                logger.info("Verificando gastos fixos previstos para a data de hoje...")
+                notificados = bot_service.verificar_e_notificar_gastos_previstos(dry_run=args.dry_run)
+                print(f"✅ Verificação de previstos: {notificados} lembrete(s) enviado(s).")
 
-        if getattr(args, "checar_previstos", False):
-            logger.info("Verificando gastos fixos previstos para a data de hoje...")
-            notificados = bot_service.verificar_e_notificar_gastos_previstos()
-            print(f"✅ Verificação de previstos: {notificados} lembrete(s) enviado(s).")
-
-        if getattr(args, "sync", False) or (
-            not getattr(args, "semanal", False) and not getattr(args, "checar_previstos", False)
-        ):
-            logger.info("Verificando mensagens pendentes no Telegram...")
-            qtd = bot_service.processar_mensagens_pendentes(dry_run=args.dry_run)
+            if getattr(args, "sync", False) or (
+                not getattr(args, "semanal", False) and not getattr(args, "checar_previstos", False)
+            ):
+                logger.info("Verificando mensagens pendentes no Telegram...")
+                qtd = bot_service.processar_mensagens_pendentes(dry_run=args.dry_run)
             print(f"✅ Processamento concluído: {qtd} mensagem(ns) tratada(s).")
 
 

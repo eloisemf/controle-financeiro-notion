@@ -12,6 +12,7 @@ from financas.domain.investments import (
     AporteInvestimento,
     AtivoCarteira,
     SnapshotPatrimonial,
+    TipoOperacaoInvestimento,
 )
 from financas.domain.models import normalizar_texto_chave
 from financas.notion.builders import NotionParser, NotionPropertyBuilder as Prop
@@ -190,7 +191,8 @@ class InvestimentosRepository(BaseNotionRepository):
             taxas = NotionParser.prop_decimal(p, ColunasAportes.TAXAS) or Decimal("0.00")
             tipo = NotionParser.prop_select(p, ColunasAportes.TIPO) or "Compra / Aporte"
             bruto = (qtd * pu) + taxas
-            total_mes += -bruto if tipo == "Venda / Resgate" else bruto
+            if tipo != TipoOperacaoInvestimento.REALOCACAO.value:
+                total_mes += -bruto if tipo == TipoOperacaoInvestimento.VENDA.value else bruto
 
             mes_rels = NotionParser.prop_relation_ids(p, ColunasAportes.MES_COMPETENCIA)
             if not dry_run and mes_norm and mes_norm not in mes_rels:
@@ -268,3 +270,26 @@ class InvestimentosRepository(BaseNotionRepository):
 
         pagina = self._client.create_page(database_id=self._db_ids.aportes, properties=props)
         return NotionParser.normalize_id(pagina["id"])
+
+    def garantir_opcao_realocacao(self) -> bool:
+        """Garante que a opção `Realocação / Reinvestimento` exista em `Tipo` de Aportes."""
+        schema = self._client.get_database(self._db_ids.aportes)
+        prop_tipo = schema.get("properties", {}).get(ColunasAportes.TIPO, {})
+        if prop_tipo.get("type") != "select":
+            return False
+        opcoes = prop_tipo.get("select", {}).get("options", [])
+        if any(o.get("name") == TipoOperacaoInvestimento.REALOCACAO.value for o in opcoes):
+            return False
+        preservadas = [
+            {"name": o["name"], "color": o.get("color", "default")}
+            for o in opcoes
+            if o.get("name")
+        ]
+        preservadas.append(
+            {"name": TipoOperacaoInvestimento.REALOCACAO.value, "color": "blue"}
+        )
+        self._client.update_database(
+            self._db_ids.aportes,
+            {"properties": {ColunasAportes.TIPO: {"select": {"options": preservadas}}}},
+        )
+        return True

@@ -121,3 +121,39 @@ class ParcelasRepository(BaseNotionRepository):
             self._cache.append({"id": page_id, "properties": props_cache})
         logger.debug("Criada compra parcelada '%s' (%dx R$ %s) em 📦 Parcelas.", nome_base, lancamento.total_parcelas, lancamento.valor)
         return page_id
+
+    def listar_parcelas_ativas(self) -> list[dict[str, Any]]:
+        """Lista compras parceladas em andamento ordenadas pelo maior saldo restante."""
+        if not self._database_id:
+            return []
+
+        ativas: list[dict[str, Any]] = []
+        for p in self._listar_bruto():
+            atual_raw = NotionParser.prop_decimal_raw(p, ColunasParcelas.PARCELA_ATUAL)
+            total_raw = NotionParser.prop_decimal_raw(p, ColunasParcelas.TOTAL_PARCELAS)
+            if atual_raw is None or total_raw is None:
+                continue
+            parcela_atual = int(atual_raw)
+            total_parcelas = int(total_raw)
+            if parcela_atual <= 0 or parcela_atual > total_parcelas:
+                continue
+
+            valor_parcela = NotionParser.prop_decimal(p, ColunasParcelas.VALOR_PARCELA) or Decimal("0.00")
+            restantes = total_parcelas - parcela_atual + 1
+            falta_pagar = (valor_parcela * Decimal(restantes)).quantize(Decimal("0.01"))
+            cartoes_p = NotionParser.prop_relation_ids(p, ColunasParcelas.CARTAO)
+            cartao_nome = self._catalogo.nome_conta_por_id(cartoes_p[0]) if cartoes_p else None
+            ativas.append(
+                {
+                    "gasto": NotionParser.page_title(p),
+                    "parcela_atual": parcela_atual,
+                    "total_parcelas": total_parcelas,
+                    "valor_parcela": valor_parcela,
+                    "falta_pagar": falta_pagar,
+                    "fim": NotionParser.prop_rich_text(p, ColunasParcelas.FIM),
+                    "cartao": cartao_nome or "Cartão",
+                    "de_quem": NotionParser.prop_select(p, ColunasParcelas.DE_QUEM) or "Meu",
+                }
+            )
+        ativas.sort(key=lambda item: item["falta_pagar"], reverse=True)
+        return ativas

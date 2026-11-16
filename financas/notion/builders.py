@@ -7,10 +7,10 @@ conversão de `Decimal` para o formato numérico JSON ocorra em um único ponto.
 from __future__ import annotations
 
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Iterable
 
-from financas.domain.models import para_decimal
+from financas.domain.models import CENTAVO, para_decimal
 
 
 class NotionPropertyBuilder:
@@ -160,9 +160,9 @@ class NotionParser:
     def prop_decimal(cls, page: dict[str, Any], prop_name: str) -> Decimal | None:
         prop = page.get("properties", {}).get(prop_name, {})
         raw = cls._extract_raw_number(prop)
-        if raw is None:
+        if raw is None or isinstance(raw, bool):
             return None
-        return para_decimal(str(raw))
+        return Decimal(str(raw)).quantize(CENTAVO, rounding=ROUND_HALF_UP)
 
     @classmethod
     def prop_decimal_raw(cls, page: dict[str, Any], prop_name: str) -> Decimal | None:

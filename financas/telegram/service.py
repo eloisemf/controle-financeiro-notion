@@ -13,6 +13,7 @@ from typing import Any
 from financas.config import AppConfig
 from financas.domain.billing import CalculadoraFatura, parse_mes_competencia
 from financas.domain.classification import ClassificadorCategoria
+from financas.domain.models import formatar_brl
 from financas.notion.client import NotionClient
 from financas.notion.repositories import NotionRepositories
 from financas.parsers.router import ExtratorDocumentosFinanceiros
@@ -42,12 +43,14 @@ class TelegramBotService:
 
         self.config = config
         self._notion = client
+        self._owns_telegram = telegram_client is None
         self._telegram = telegram_client or TelegramClient(
             token=config.telegram_bot_token,
             chat_id=config.telegram_chat_id,
         )
         self._repos = repos or NotionRepositories.from_client(client, config)
         self._calc = CalculadoraFatura()
+        self._owns_market = market_data is None
         self._market = market_data or MarketDataService()
         self._invest_service = InvestimentosService(
             client=self._notion,
@@ -67,6 +70,19 @@ class TelegramBotService:
             repos=self._repos,
             invest_service=self._invest_service,
         )
+
+    def close(self) -> None:
+        """Fecha clientes HTTP criados internamente pelo serviço."""
+        if self._owns_telegram and hasattr(self._telegram, "close"):
+            self._telegram.close()
+        if self._owns_market and hasattr(self._market, "close"):
+            self._market.close()
+
+    def __enter__(self) -> TelegramBotService:
+        return self
+
+    def __exit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:
+        self.close()
 
     def processar_mensagens_pendentes(self, dry_run: bool = False) -> int:
         """Lê mensagens novas do Telegram, lança no Notion e responde ao usuário."""
@@ -124,7 +140,7 @@ class TelegramBotService:
                 processadas += 1
 
         # Confirma as mensagens processadas avançando o offset
-        if maior_update_id > 0:
+        if maior_update_id > 0 and not dry_run:
             self._telegram.obter_atualizacoes(offset=maior_update_id + 1, timeout=0)
 
         return processadas
@@ -181,6 +197,8 @@ class TelegramBotService:
                 "/categorias — Lista todas as categorias e contas aceitas\n"
                 "/modelo — Envia o molde pronto para copiar e colar\n"
                 "/resumo — Relatório de gastos, saldo livre e faturas\n"
+                "/analise — Top categorias, essencial vs não essencial e poupança\n"
+                "/parcelas — Compras parceladas ativas e total restante\n"
                 "/investimentos — Atualiza cotações e mostra patrimônio\n"
                 "/confirmar [nome] — Confirma gasto fixo previsto como Realizado\n"
                 "/ajuda — Exibe esta mensagem"
@@ -243,22 +261,40 @@ class TelegramBotService:
             resumo = self._reporter.gerar_resumo_semanal()
             self._telegram.enviar_mensagem(resumo, chat_id=chat_id)
 
+        elif cmd in ("/analise", "/insights"):
+            self._telegram.enviar_mensagem("⏳ Analisando categorias, parcelas e poupança do ciclo...", chat_id=chat_id)
+            analise = self._reporter.gerar_analise_mensal()
+            self._telegram.enviar_mensagem(analise, chat_id=chat_id)
+
+        elif cmd in ("/parcelas", "/parcelamentos"):
+            relatorio_parc = self._reporter.gerar_relatorio_parcelas()
+            self._telegram.enviar_mensagem(relatorio_parc, chat_id=chat_id)
+
         elif cmd == "/investimentos":
             self._telegram.enviar_mensagem("⏳ Buscando cotações de mercado (B3 e Tesouro)...", chat_id=chat_id)
             try:
-                self._invest_service.atualizar_cotacoes_carteira()
+                self._invest_service.atualizar_cotacoes_carteira(dry_run=dry_run)
             except Exception as e:
                 logger.warning("Falha ao atualizar cotações: %s", e)
             resumo_inv = self._invest_service.obter_resumo_carteira()
             pat = resumo_inv.patrimonio_total
             lucro = resumo_inv.lucro_total
-            sinal = "+" if lucro >= 0 else ""
+            sinal = "+" if lucro > 0 else ""
+            cdi_linha = ""
+            try:
+                cdi_mes = self._market.obter_cdi_mes_atual()
+                if cdi_mes is not None:
+                    cdi_pct = (cdi_mes * Decimal("100")).quantize(Decimal("0.01"))
+                    cdi_linha = f"• CDI Acumulado no Mês: *{str(cdi_pct).replace('.', ',')}%*\n"
+            except Exception as exc:
+                logger.debug("Falha ao obter benchmark CDI: %s", exc)
             txt = (
                 "📈 *PAINEL DE INVESTIMENTOS*\n"
                 "━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"• Patrimônio Total: *R$ {pat:,.2f}*\n".replace(",", "X").replace(".", ",").replace("X", ".") +
-                f"• Rentabilidade: *{sinal}R$ {lucro:,.2f}*\n".replace(",", "X").replace(".", ",").replace("X", ".") +
+                f"• Patrimônio Total: *{formatar_brl(pat)}*\n"
+                f"• Rentabilidade: *{sinal}{formatar_brl(lucro)}*\n"
                 f"• Total de Ativos: *{resumo_inv.total_ativos} ativos*\n"
+                f"{cdi_linha}"
                 "━━━━━━━━━━━━━━━━━━━━━━"
             )
             self._telegram.enviar_mensagem(txt, chat_id=chat_id)
@@ -303,7 +339,7 @@ class TelegramBotService:
             return
 
         desc = encontrado["descricao"]
-        val_fmt = f"R$ {encontrado['valor']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        val_fmt = formatar_brl(encontrado["valor"])
         if not dry_run:
             self._repos.transacoes.marcar_como_realizado(encontrado["page_id"])
 
@@ -372,7 +408,7 @@ class TelegramBotService:
             self._repos.meses.garantir_mes(hoje.year, hoje.month)
             page_id = self._repos.transacoes.criar_lancamento(lancamento)
 
-        val_fmt = f"R$ {lancamento.valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        val_fmt = formatar_brl(lancamento.valor)
         msg_confirmacao = (
             "💜 *Reembolso Registrado no Notion!*\n"
             "━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -441,7 +477,7 @@ class TelegramBotService:
                 dry_run=False,
             )
 
-        val_fmt = f"R$ {lancamento.valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        val_fmt = formatar_brl(lancamento.valor)
         dt_fmt = lancamento.data_compra.strftime("%d/%m/%Y")
         msg_confirmacao = (
             "📈 *Investimento Registrado no Notion!*\n"
@@ -505,6 +541,15 @@ class TelegramBotService:
 
         lancamento = self._parser.criar_lancamento(gasto)
         futuras = self._calc.projetar_parcelas_futuras(lancamento) if lancamento.eh_parcelado else []
+        bloco_comprometimento = ""
+        if lancamento.eh_parcelado and lancamento.total_parcelas:
+            try:
+                bloco_comprometimento = self._reporter.gerar_comprometimento_futuro(
+                    parcela_extra=lancamento.valor,
+                    total_parcelas_extra=lancamento.total_parcelas,
+                )
+            except Exception as exc:
+                logger.debug("Falha ao gerar comprometimento futuro: %s", exc)
 
         page_id = "dry-run-id"
         vinculado_parcelas = False
@@ -524,7 +569,7 @@ class TelegramBotService:
                 self._repos.meses.garantir_mes(ano_f, mes_f)
                 self._repos.transacoes.criar_lancamento(parc_futura)
 
-        val_fmt = f"R$ {lancamento.valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        val_fmt = formatar_brl(lancamento.valor)
         nome_exibicao = lancamento.nome_fantasia or lancamento.descricao
         bloco_parcelas = ""
         if lancamento.eh_parcelado and lancamento.parcela_atual and lancamento.total_parcelas:
@@ -544,6 +589,8 @@ class TelegramBotService:
             f"• *Mês Competência:* {lancamento.mes_competencia}\n"
             "━━━━━━━━━━━━━━━━━━━━━━"
         )
+        if bloco_comprometimento:
+            msg_confirmacao += f"\n\n{bloco_comprometimento}"
         botoes = {
             "inline_keyboard": [
                 [{"text": "🗑️ Desfazer / Excluir Lançamento", "callback_data": f"excluir:{page_id}"}]
@@ -600,22 +647,27 @@ class TelegramBotService:
                     f"• Já existentes (ignorados): *{len(relatorio.ignorados_por_idempotencia)}*\n"
                     "━━━━━━━━━━━━━━━━━━━━━━"
                 )
+                if relatorio.alertas_variacao_fixos:
+                    alertas_fmt = "\n".join(f"  • {a}" for a in relatorio.alertas_variacao_fixos)
+                    resumo_txt += f"\n\n⚠️ *Variação acima de 15% em Gastos Fixos:*\n{alertas_fmt}"
                 self._telegram.enviar_mensagem(resumo_txt, chat_id=chat_id)
             except Exception as exc:
                 logger.error("Erro ao processar anexo do Telegram: %s", exc, exc_info=True)
                 self._telegram.enviar_mensagem(f"❌ Erro ao processar arquivo: {exc}", chat_id=chat_id)
 
-    def disparar_resumo_semanal(self) -> None:
+    def disparar_resumo_semanal(self, dry_run: bool = False) -> str:
         """Atualiza investimentos e dispara o resumo semanal no Telegram."""
         try:
             logger.info("Atualizando cotações semanais de investimentos...")
-            self._invest_service.atualizar_cotacoes_carteira()
+            self._invest_service.atualizar_cotacoes_carteira(dry_run=dry_run)
         except Exception as exc:
             logger.warning("Falha ao atualizar cotações de investimentos: %s", exc)
 
-        logger.info("Enviando painel semanal para o Telegram...")
+        logger.info("Gerando painel semanal%s...", " (dry-run)" if dry_run else " para o Telegram")
         resumo = self._reporter.gerar_resumo_semanal()
-        self._telegram.enviar_mensagem(resumo)
+        if not dry_run:
+            self._telegram.enviar_mensagem(resumo)
+        return resumo
 
     def notificar(self, texto: str) -> None:
         """Envia uma mensagem direta de notificação para o chat do usuário."""
@@ -624,7 +676,11 @@ class TelegramBotService:
         else:
             self._telegram.enviar_mensagem(texto)
 
-    def verificar_e_notificar_gastos_previstos(self, data_referencia: date | None = None) -> int:
+    def verificar_e_notificar_gastos_previstos(
+        self,
+        data_referencia: date | None = None,
+        dry_run: bool = False,
+    ) -> int:
         """Verifica se há gastos com status 'Previsto' com cobrança na data de hoje e pergunta ao usuário."""
         hoje = data_referencia or date.today()
         previstos = self._repos.transacoes.buscar_previstos_para_data(hoje)
@@ -639,7 +695,7 @@ class TelegramBotService:
 
         for item in previstos:
             desc = item["descricao"]
-            val_fmt = f"R$ {item['valor']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            val_fmt = formatar_brl(item["valor"])
             conta = item["conta"]
             page_id = item["page_id"]
 
@@ -659,7 +715,8 @@ class TelegramBotService:
                     [{"text": f"✅ Confirmar {desc}", "callback_data": f"confirmar:{page_id}"}]
                 ]
             }
-            self._telegram.enviar_mensagem(msg, chat_id=chat_id, reply_markup=botoes)
+            if not dry_run:
+                self._telegram.enviar_mensagem(msg, chat_id=chat_id, reply_markup=botoes)
 
         logger.info("Notificados %d gastos previstos para o chat %s.", len(previstos), chat_id)
         return len(previstos)

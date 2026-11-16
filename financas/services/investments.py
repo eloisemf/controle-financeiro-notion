@@ -325,7 +325,7 @@ class InvestimentosService:
         if dry_run:
             return "dry-run-aporte-id"
 
-        mes_page_id = self._meses_repo.garantir_mes(data_aporte.year, data_aporte.month)
+        mes_page_id, _ = self._meses_repo.garantir_mes(data_aporte.year, data_aporte.month)
         aporte_id = self._investimentos_repo.criar_aporte(
             nome=f"Aporte {ativo_nome}",
             data_aporte=data_aporte,

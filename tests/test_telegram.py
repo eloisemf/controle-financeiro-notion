@@ -411,6 +411,177 @@ class TestTelegramBotServicePrevistos(unittest.TestCase):
         self.assertEqual(id_2, id_1)
         mock_client.create_page.assert_called_once()
 
+    def test_dry_run_nao_avanca_offset_nem_atualiza_cotacoes(self) -> None:
+        self.service._invest_service.atualizar_cotacoes_carteira = MagicMock(return_value=[])
+        self.service._market.obter_cdi_mes_atual = MagicMock(return_value=None)
+        self.service._invest_service.obter_resumo_carteira = MagicMock(
+            return_value=MagicMock(
+                patrimonio_total=Decimal("0.00"),
+                lucro_total=Decimal("0.00"),
+                total_ativos=0,
+            )
+        )
+        self.mock_telegram.obter_atualizacoes.return_value = [
+            {
+                "update_id": 500,
+                "message": {
+                    "chat": {"id": 123456},
+                    "text": "/investimentos",
+                    "date": 1700000000,
+                },
+            }
+        ]
+        processadas = self.service.processar_mensagens_pendentes(dry_run=True)
+        self.assertEqual(processadas, 1)
+        self.mock_telegram.obter_atualizacoes.assert_called_once_with(timeout=0)
+        self.service._invest_service.atualizar_cotacoes_carteira.assert_called_once_with(dry_run=True)
+
+    def test_resumo_semanal_usa_ciclo_dia_25_e_faturas_de_meses(self) -> None:
+        from financas.telegram.reports import TelegramReportBuilder
+
+        self.mock_repos.meses.obter_resumo_mes.return_value = {
+            "meus_gastos": Decimal("2390.16"),
+            "saldo_livre": Decimal("1326.57"),
+            "meta_mensal": Decimal("2850.00"),
+            "receita": Decimal("0.00"),
+            "fatura_santander": Decimal("1511.82"),
+            "fatura_bradesco": Decimal("428.15"),
+            "fatura_inter": Decimal("0.00"),
+        }
+        self.mock_client.query_database.return_value = []
+
+        builder = TelegramReportBuilder(
+            self.mock_client,
+            self.mock_repos,
+            self.service._invest_service,
+        )
+        texto = builder.gerar_resumo_semanal(data_ref=date(2026, 11, 25))
+
+        self.mock_repos.meses.obter_resumo_mes.assert_called_once_with("2026-Dezembro")
+        self.assertIn("2026-Dezembro", texto)
+        self.assertIn("Santander Credito: *R$ 1.511,82*", texto)
+        self.assertIn("Bradesco Credito: *R$ 428,15*", texto)
+        self.assertIn("~R$ 44,22/dia (ou R$ 309,53/sem)", texto)
+        self.assertNotIn("Inter Credito", texto)
+        self.mock_repos.transacoes.listar_previstos_periodo.assert_called_once_with(
+            self.mock_repos.meses.id_mes.return_value,
+            date(2026, 11, 25),
+            date(2026, 12, 5),
+        )
+
+    def test_disparar_resumo_semanal_dry_run_e_context_manager(self) -> None:
+        self.service._invest_service.atualizar_cotacoes_carteira = MagicMock(return_value=[])
+        self.service._reporter.gerar_resumo_semanal = MagicMock(return_value="resumo-teste")
+        with self.service as bot:
+            resumo = bot.disparar_resumo_semanal(dry_run=True)
+
+        self.assertEqual(resumo, "resumo-teste")
+        self.service._invest_service.atualizar_cotacoes_carteira.assert_called_once_with(dry_run=True)
+        self.mock_telegram.enviar_mensagem.assert_not_called()
+        self.mock_telegram.close.assert_not_called()
+
+    def test_comando_analise_gera_top_categorias_uso_e_poupanca(self) -> None:
+        self.mock_repos.meses.obter_resumo_mes.return_value = {
+            "meus_gastos": Decimal("1000.00"),
+            "saldo_livre": Decimal("2000.00"),
+            "meta_mensal": Decimal("2850.00"),
+            "receita": Decimal("3000.00"),
+            "total_parcelado_mes": Decimal("300.00"),
+            "aportes_mes": Decimal("500.00"),
+            "taxa_poupanca": Decimal("0.6667"),
+        }
+        self.mock_repos.transacoes.listar_analise_gastos_mes.return_value = [
+            {
+                "nome": "Mercado",
+                "valor_meu": Decimal("600.00"),
+                "categoria": "Mercado",
+                "uso_dinheiro": "Essencial",
+                "parcelado": False,
+            },
+            {
+                "nome": "Tenis - Parc 01/05",
+                "valor_meu": Decimal("400.00"),
+                "categoria": "Vestuario",
+                "uso_dinheiro": "Nao essencial",
+                "parcelado": True,
+            },
+        ]
+
+        self.service._tratar_comando("/analise", chat_id="123456", dry_run=False)
+        msg = self.mock_telegram.enviar_mensagem.call_args[0][0]
+        self.assertIn("ANÁLISE FINANCEIRA", msg)
+        self.assertIn("Mercado: *R$ 600,00* (60.0%)", msg)
+        self.assertIn("Essencial: *R$ 600,00* (60.0%)", msg)
+        self.assertIn("Comprometido em Parcelas: *R$ 400,00*", msg)
+        self.assertIn("Taxa de Poupança: *66.7%*", msg)
+
+    def test_comando_parcelas_lista_compras_ativas_e_totais(self) -> None:
+        self.mock_repos.parcelas.listar_parcelas_ativas.return_value = [
+            {
+                "gasto": "Tenis",
+                "parcela_atual": 2,
+                "total_parcelas": 5,
+                "valor_parcela": Decimal("110.00"),
+                "falta_pagar": Decimal("440.00"),
+                "fim": "março/27",
+                "cartao": "Santander Credito",
+                "de_quem": "Meu",
+            }
+        ]
+        self.service._tratar_comando("/parcelas", chat_id="123456", dry_run=False)
+        msg = self.mock_telegram.enviar_mensagem.call_args[0][0]
+        self.assertIn("COMPRAS PARCELADAS ATIVAS", msg)
+        self.assertIn("Comprometimento Mensal (Meu): *R$ 110,00/mês*", msg)
+        self.assertIn("Total Restante a Pagar (Meu): *R$ 440,00*", msg)
+        self.assertIn("*Tenis*: 02/05", msg)
+
+    def test_comprometimento_futuro_3_meses_alerta_acima_50_por_cento(self) -> None:
+        from financas.domain.models import GastoFixo
+        from financas.telegram.reports import TelegramReportBuilder
+
+        self.mock_repos.meses.obter_resumo_mes.return_value = {
+            "salario_base": Decimal("3000.00"),
+            "bonus": Decimal("0.00"),
+            "receita": Decimal("0.00"),
+        }
+        self.mock_repos.gastos_fixos.listar_ativos.return_value = [
+            GastoFixo(
+                nome="Aluguel",
+                valor_meu=Decimal("1200.00"),
+                valor_cobrado=Decimal("1200.00"),
+                categoria="Aluguel",
+                pago_com="Santander Conta",
+            )
+        ]
+        self.mock_repos.parcelas.listar_parcelas_ativas.return_value = [
+            {
+                "gasto": "Ar condicionado",
+                "parcela_atual": 11,
+                "total_parcelas": 12,
+                "valor_parcela": Decimal("300.00"),
+                "falta_pagar": Decimal("600.00"),
+                "fim": "dezembro/26",
+                "cartao": "Bradesco Credito",
+                "de_quem": "Meu",
+            }
+        ]
+        builder = TelegramReportBuilder(
+            self.mock_client,
+            self.mock_repos,
+            self.service._invest_service,
+        )
+        texto = builder.gerar_comprometimento_futuro(
+            data_ref=date(2026, 11, 16),
+            parcela_extra=Decimal("150.00"),
+            total_parcelas_extra=3,
+        )
+        self.assertIn("Comprometimento Próximos 3 Meses", texto)
+        # Dezembro/26: 1200 fixo + 300 (ultima parcela) + 150 (extra) = 1650 = 55.0%
+        self.assertIn("2026-Dezembro*: *R$ 1.650,00* (55.0% da renda", texto)
+        # Janeiro/27: 1200 fixo + 0 + 150 (extra) = 1350 = 45.0%
+        self.assertIn("2027-Janeiro*: *R$ 1.350,00* (45.0% da renda", texto)
+        self.assertIn("acima de 50%", texto)
+
 
 if __name__ == "__main__":
     unittest.main()

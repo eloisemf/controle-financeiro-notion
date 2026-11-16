@@ -70,6 +70,18 @@ class TransacoesRepository(BaseNotionRepository):
         if pessoas_db_id and ColunasTransacoes.PESSOA not in existentes:
             novas[ColunasTransacoes.PESSOA] = Schema.relation_dual(pessoas_db_id)
             alteradas.append(ColunasTransacoes.PESSOA)
+        if "Valor Líquido (Meu)" not in existentes:
+            novas["Valor Líquido (Meu)"] = {
+                "formula": {
+                    "expression": (
+                        f'if(prop("{ColunasTransacoes.TIPO_TRANSACAO}") != "Saida", 0, '
+                        f'if(prop("{ColunasTransacoes.PESSOA}").empty(), prop("{ColunasTransacoes.VALOR}"), '
+                        f'prop("{ColunasTransacoes.VALOR}") - if(prop("{ColunasTransacoes.VALOR_A_RECEBER}") > 0, '
+                        f'prop("{ColunasTransacoes.VALOR_A_RECEBER}"), prop("{ColunasTransacoes.VALOR}"))))'
+                    )
+                }
+            }
+            alteradas.append("Valor Líquido (Meu)")
 
         prop_tipo = existentes.get(ColunasTransacoes.TIPO_TRANSACAO, {})
         if prop_tipo.get("type") == "select":
@@ -240,24 +252,90 @@ class TransacoesRepository(BaseNotionRepository):
             ]
         }
         paginas = self._client.query_database(self._database_id, filter_payload=filtro)
+        return [self._extrair_resumo_previsto(p, data_referencia) for p in paginas]
+
+    def listar_previstos_periodo(
+        self,
+        mes_id: str,
+        data_inicio: date,
+        data_fim: date,
+    ) -> list[dict[str, Any]]:
+        """Retorna lançamentos `Previsto` de um mês cuja data esteja no intervalo `[data_inicio, data_fim]`."""
+        filtro = {
+            "and": [
+                {"property": ColunasTransacoes.MES, "relation": {"contains": mes_id}},
+                {"property": ColunasTransacoes.STATUS, "select": {"equals": StatusTransacao.PREVISTO.value}},
+            ]
+        }
+        paginas = self._client.query_database(self._database_id, filter_payload=filtro)
         itens: list[dict[str, Any]] = []
         for p in paginas:
-            nome = NotionParser.page_title(p)
-            val = NotionParser.prop_decimal(p, ColunasTransacoes.VALOR)
-            contas = (
-                NotionParser.prop_relation_ids(p, ColunasTransacoes.SAIDA_DE)
-                or NotionParser.prop_relation_ids(p, ColunasTransacoes.ENTRADA_EM)
+            dt_str = NotionParser.prop_date_start(p, ColunasTransacoes.CRIADO_EM)
+            if not dt_str:
+                continue
+            dt = date.fromisoformat(dt_str)
+            if data_inicio <= dt <= data_fim:
+                itens.append(self._extrair_resumo_previsto(p, dt))
+        return itens
+
+    def _extrair_resumo_previsto(self, pagina: dict[str, Any], data_item: date) -> dict[str, Any]:
+        nome = NotionParser.page_title(pagina)
+        val = NotionParser.prop_decimal(pagina, ColunasTransacoes.VALOR) or Decimal("0.00")
+        contas = (
+            NotionParser.prop_relation_ids(pagina, ColunasTransacoes.SAIDA_DE)
+            or NotionParser.prop_relation_ids(pagina, ColunasTransacoes.ENTRADA_EM)
+        )
+        nome_conta = self._catalogo.nome_conta_por_id(contas[0]) if contas else None
+        conta_label = nome_conta or "Conta/Cartão"
+        return {
+            "page_id": NotionParser.normalize_id(pagina["id"]),
+            "nome": nome,
+            "descricao": nome,
+            "valor": val,
+            "conta": conta_label,
+            "data": data_item,
+        }
+
+    def listar_analise_gastos_mes(self, mes_id: str) -> list[dict[str, Any]]:
+        """Lista saídas do mês com valor líquido pessoal, categoria, uso do dinheiro e flag de parcelamento."""
+        filtro = {
+            "and": [
+                {"property": ColunasTransacoes.MES, "relation": {"contains": mes_id}},
+                {"property": ColunasTransacoes.TIPO_TRANSACAO, "select": {"equals": TipoTransacao.SAIDA.value}},
+            ]
+        }
+        paginas = self._client.query_database(self._database_id, filter_payload=filtro)
+        itens: list[dict[str, Any]] = []
+        for p in paginas:
+            valor = NotionParser.prop_decimal(p, ColunasTransacoes.VALOR) or Decimal("0.00")
+            pessoas = NotionParser.prop_relation_ids(p, ColunasTransacoes.PESSOA)
+            if pessoas:
+                a_receber = NotionParser.prop_decimal(p, ColunasTransacoes.VALOR_A_RECEBER)
+                desconto = a_receber if (a_receber is not None and a_receber > Decimal("0.00")) else valor
+                valor_meu = max(Decimal("0.00"), valor - desconto)
+            else:
+                valor_meu = valor
+            if valor_meu <= Decimal("0.00"):
+                continue
+
+            cat_ids = NotionParser.prop_relation_ids(p, ColunasTransacoes.CATEGORIA)
+            uso_ids = NotionParser.prop_relation_ids(p, ColunasTransacoes.TIPO_SAIDA)
+            parc_ids = NotionParser.prop_relation_ids(p, ColunasTransacoes.COMPRA_PARCELADA)
+            itens.append(
+                {
+                    "nome": NotionParser.page_title(p),
+                    "valor_meu": valor_meu,
+                    "categoria": (
+                        self._catalogo.nome_categoria_por_id(cat_ids[0]) if cat_ids else None
+                    )
+                    or "Sem Categoria",
+                    "uso_dinheiro": (
+                        self._catalogo.nome_uso_por_id(uso_ids[0]) if uso_ids else None
+                    )
+                    or "Não classificado",
+                    "parcelado": bool(parc_ids),
+                }
             )
-            nome_conta = "Conta/Cartão"
-            if contas:
-                nome_conta = self._catalogo.nome_conta_por_id(contas[0]) or "Conta/Cartão"
-            itens.append({
-                "page_id": NotionParser.normalize_id(p["id"]),
-                "descricao": nome,
-                "valor": val,
-                "conta": nome_conta,
-                "data": data_referencia,
-            })
         return itens
 
     def buscar_previsto_por_nome(self, termo: str) -> dict[str, Any] | None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 import logging
 import re
 
@@ -151,3 +152,20 @@ class CatalogoRepository(BaseNotionRepository):
                 exc_info=True,
             )
         return resultado
+
+    def listar_faturas_cartoes_fallback(self) -> dict[str, Decimal]:
+        """Lê faturas/saldos diretamente da base `Contas e cartões` como fallback."""
+        cartoes: dict[str, Decimal] = {}
+        paginas = self._client.query_database(self._db_ids.contas)
+        for p in paginas:
+            if NotionParser.prop_select(p, "Tipo") != "Cartão de crédito":
+                continue
+            nome = NotionParser.page_title(p)
+            if not nome:
+                continue
+            fatura_val = (
+                NotionParser.prop_decimal(p, "Fatura do Mês (Realizada)")
+                or abs(NotionParser.prop_decimal(p, "Saldo") or Decimal("0.00"))
+            )
+            cartoes[nome] = fatura_val
+        return cartoes

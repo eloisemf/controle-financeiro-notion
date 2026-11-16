@@ -63,3 +63,18 @@ jobs:
           if [ "$HORA_UTC" = "13" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             python telegram_bot.py --checar-previstos
           fi
+
+      - name: Notificar Falha no Telegram
+        if: failure()
+        run: |
+          if [ -f .env ]; then
+            set -a
+            . ./.env
+            set +a
+          fi
+          if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${TELEGRAM_CHAT_ID:-}" ]; then
+            curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+              -d "chat_id=${TELEGRAM_CHAT_ID}" \
+              -d "parse_mode=Markdown" \
+              --data-urlencode "text=$(printf '🚨 *Falha na rotina:* %s\n%s/%s/actions/runs/%s' '${{ github.workflow }}' '${{ github.server_url }}' '${{ github.repository }}' '${{ github.run_id }}')" >/dev/null || true
+          fi

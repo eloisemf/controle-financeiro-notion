@@ -11,6 +11,7 @@ from enum import Enum
 class TipoOperacaoInvestimento(str, Enum):
     COMPRA = "Compra / Aporte"
     VENDA = "Venda / Resgate"
+    REALOCACAO = "Realocação / Reinvestimento"
     PROVENTO = "Provento / Dividendo"
     AMORTIZACAO = "Amortização"
 
@@ -136,6 +137,13 @@ class AporteInvestimento:
     @property
     def eh_venda(self) -> bool:
         return str(self.tipo) == TipoOperacaoInvestimento.VENDA.value or self.tipo == TipoOperacaoInvestimento.VENDA
+
+    @property
+    def eh_realocacao(self) -> bool:
+        return (
+            str(self.tipo) == TipoOperacaoInvestimento.REALOCACAO.value
+            or self.tipo == TipoOperacaoInvestimento.REALOCACAO
+        )
 
     @property
     def fluxo_financeiro(self) -> Decimal:
