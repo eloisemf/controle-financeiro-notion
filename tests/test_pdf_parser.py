@@ -146,12 +146,12 @@ class TestDocumentParsers(unittest.TestCase):
             " 28/08 ESTORNO COMPRA -94,99\n"
             "Parcelamentos\n"
             "Compra Data Descrição Parcela R$ US$\n"
-            "2 04/08 LOJA EXEMPLO 02/04 145,87\n"
-            " 08/08 RENNER 02/03 66,61\n"
+            "2 04/08 LOJA EXEMPLO 02/04 150,00\n"
+            " 08/08 LOJA EXEMPLO B 02/03 80,00\n"
             "Despesas\n"
             "Compra Data Descrição Parcela R$ US$\n"
-            " 19/08 ASSINATURA EXEMPLO 137,50\n"
-            " 22/09 MP *CLUBEGIRO 239,74\n"
+            " 19/08 ASSINATURA EXEMPLO 120,00\n"
+            " 22/09 MP *CLUBEGIRO 210,00\n"
             "Resumo da Fatura\n"
         )
         parser = SantanderCartoesPdfParser()
@@ -162,11 +162,49 @@ class TestDocumentParsers(unittest.TestCase):
         self.assertEqual(itens[0].descricao, "LOJA EXEMPLO")
         self.assertEqual(itens[0].parcela_atual, 2)
         self.assertEqual(itens[0].total_parcelas, 4)
-        self.assertEqual(itens[0].valor, Decimal("145.87"))
+        self.assertEqual(itens[0].valor, Decimal("150.00"))
         self.assertEqual(itens[0].mes_competencia, "2026-Setembro")
-        self.assertEqual(itens[1].descricao, "RENNER")
+        self.assertEqual(itens[1].descricao, "LOJA EXEMPLO B")
         self.assertEqual(itens[1].parcela_atual, 2)
         self.assertEqual(itens[1].total_parcelas, 3)
+
+    def test_parse_santander_cartoes_pdf_consolidada_dois_ciclos(self) -> None:
+        amostra = (
+            "Detalhamento da Fatura\n"
+            "Pagamento e Demais Créditos\n"
+            "Compra Data Descrição Parcela R$ US$\n"
+            " 26/09 PAGAMENTO DE FATURA-INTERNET -1.000,00\n"
+            " 26/10 PAGAMENTO DE FATURA-INTERNET -450,00\n"
+            "Parcelamentos\n"
+            "Compra Data Descrição Parcela R$ US$\n"
+            " 25/09 LOJA PARCELADA A 01/02 200,00\n"
+            " 08/08 LOJA ENCERRADA 03/03 50,00\n"
+            " 11/11 LOJA PARCELADA B 01/05 110,00\n"
+            "Despesas\n"
+            "Compra Data Descrição Parcela R$ US$\n"
+            " 20/10 LOJA ANTERIOR 200,00\n"
+            " 17/11 LOJA ATUAL 140,00\n"
+            "Resumo da Fatura\n"
+            "Descrição R$ US$\n"
+            "Saldo Anterior 1.000,00\n"
+            "(-) Total de pagamentos 1.450,00\n"
+            "(=) Saldo Desta Fatura 250,00\n"
+        )
+        parser = SantanderCartoesPdfParser()
+        itens = parser.parse_texto(
+            amostra, nome_arquivo="Fatura_112026_TESTE.PDF.pdf", ano_referencia=2026
+        )
+        self.assertEqual(len(itens), 3)
+        atual = [i for i in itens if i.mes_competencia == "2026-Novembro"]
+        self.assertEqual(len(atual), 2)
+        self.assertEqual(sum(i.valor for i in atual), Decimal("250.00"))
+        self.assertEqual({i.descricao for i in atual}, {"LOJA PARCELADA B", "LOJA ATUAL"})
+
+        futuros = [i for i in itens if i.mes_competencia == "2026-Dezembro"]
+        self.assertEqual(len(futuros), 1)
+        self.assertEqual(futuros[0].descricao_com_parcela, "LOJA PARCELADA A - Parc 02/02")
+        self.assertEqual(futuros[0].valor, Decimal("200.00"))
+        self.assertEqual(futuros[0].data_compra, date(2026, 12, 25))
 
 
 if __name__ == "__main__":

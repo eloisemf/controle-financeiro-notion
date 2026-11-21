@@ -247,8 +247,8 @@ class TestInvestimentosService(unittest.TestCase):
                     "properties": {
                         "Nome": {"title": [{"plain_text": "Tesouro Selic 2031"}]},
                         "Tipo": {"select": {"name": "Renda Fixa - Pós-fixada"}},
-                        "Valor Atual": {"number": 10640.16},
-                        "Valor Total": {"number": 9289.23},
+                        "Valor Atual": {"number": 10000.00},
+                        "Valor Total": {"number": 9000.00},
                         "Qtd": {"number": 1},
                     },
                 },
@@ -257,8 +257,8 @@ class TestInvestimentosService(unittest.TestCase):
                     "properties": {
                         "Nome": {"title": [{"plain_text": "IPCA+"}]},
                         "Tipo": {"select": {"name": "Renda Fixa - Inflação"}},
-                        "Valor Atual": {"number": 3896.66},
-                        "Valor Total": {"number": 3905.54},
+                        "Valor Atual": {"number": 4000.00},
+                        "Valor Total": {"number": 3800.00},
                         "Qtd": {"number": 1},
                     },
                 },
@@ -277,11 +277,11 @@ class TestInvestimentosService(unittest.TestCase):
                     },
                 }
             ],
-            # 5. obter_patrimonio_do_mes anterior (mes-out = 11900.00)
+            # 5. obter_patrimonio_do_mes anterior (mes-out = 11000.00)
             [
                 {
                     "id": "snap-out-1",
-                    "properties": {"Valor no Dia": {"number": 11900.00}},
+                    "properties": {"Valor no Dia": {"number": 11000.00}},
                 }
             ],
         ]
@@ -291,11 +291,11 @@ class TestInvestimentosService(unittest.TestCase):
         self.assertEqual(res["mes"], "2026-Novembro")
         self.assertEqual(res["criados"], 1)
         self.assertEqual(res["atualizados"], 1)
-        self.assertEqual(res["total_patrimonio"], Decimal("14536.82"))
-        self.assertEqual(res["patrimonio_anterior"], Decimal("11900.00"))
+        self.assertEqual(res["total_patrimonio"], Decimal("14000.00"))
+        self.assertEqual(res["patrimonio_anterior"], Decimal("11000.00"))
         self.assertEqual(res["aportes_mes"], Decimal("2500.00"))
-        # Rendimento = 14536.82 - 11900.00 - 2500.00 = +136.82
-        self.assertEqual(res["rendimento_mes"], Decimal("136.82"))
+        # Rendimento = 14000.00 - 11000.00 - 2500.00 = +500.00
+        self.assertEqual(res["rendimento_mes"], Decimal("500.00"))
 
     def test_registrar_aporte_desempacota_tupla_garantir_mes(self) -> None:
         self.service._meses_repo.garantir_mes = MagicMock(return_value=("mes-nov-id", True))

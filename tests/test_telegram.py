@@ -115,11 +115,11 @@ class TestTelegramParsers(unittest.TestCase):
             self.parser.criar_lancamento(gasto)
 
     def test_parse_reembolso_e_criacao_lancamento(self) -> None:
-        reemb = self.parser.parse_reembolso("/reembolso michele ; 145,87")
+        reemb = self.parser.parse_reembolso("/reembolso amigo ; 150,00")
         self.assertIsNotNone(reemb)
         assert reemb is not None
-        self.assertEqual(reemb.pessoa_informada, "michele")
-        self.assertEqual(reemb.valor, Decimal("145.87"))
+        self.assertEqual(reemb.pessoa_informada, "amigo")
+        self.assertEqual(reemb.valor, Decimal("150.00"))
         self.assertEqual(reemb.conta_destino, "Santander Conta")
 
         reemb_espaco = self.parser.parse_reembolso("/reembolso mae 200")
@@ -130,15 +130,15 @@ class TestTelegramParsers(unittest.TestCase):
 
         lanc = self.parser.criar_lancamento_reembolso(
             reemb,
-            nome_oficial_pessoa="Michele",
+            nome_oficial_pessoa="Amigo",
             data_referencia=date(2026, 11, 10),
         )
-        self.assertEqual(lanc.descricao, "Pix Reembolso Michele")
+        self.assertEqual(lanc.descricao, "Pix Reembolso Amigo")
         self.assertEqual(lanc.tipo, TipoTransacao.REEMBOLSO)
         self.assertEqual(lanc.categoria, "Emprestimo cartão")
         self.assertEqual(lanc.conta_ou_cartao, "Santander Conta")
         self.assertEqual(lanc.mes_competencia, "2026-Novembro")
-        self.assertEqual(lanc.pessoa, "Michele")
+        self.assertEqual(lanc.pessoa, "Amigo")
 
 
 class TestTelegramBotServicePrevistos(unittest.TestCase):
@@ -243,22 +243,22 @@ class TestTelegramBotServicePrevistos(unittest.TestCase):
         self.assertIn("Internet Claro", self.mock_telegram.enviar_mensagem.call_args[0][0])
 
     def test_comando_reembolso_cria_lancamento_tipo_reembolso(self) -> None:
-        self.mock_repos.pessoas.resolver_nome_pessoa.return_value = "Michele"
-        self.mock_repos.pessoas.pessoas_por_nome = {"Michele": "id-michele", "Mãe": "id-mae"}
+        self.mock_repos.pessoas.resolver_nome_pessoa.return_value = "Amigo"
+        self.mock_repos.pessoas.pessoas_por_nome = {"Amigo": "id-amigo", "Mãe": "id-mae"}
         self.mock_repos.transacoes.criar_lancamento.return_value = "page-reemb-1"
 
-        self.service._tratar_comando("/reembolso michele ; 145,87", chat_id="123456", dry_run=False)
+        self.service._tratar_comando("/reembolso amigo ; 150,00", chat_id="123456", dry_run=False)
 
         self.mock_repos.transacoes.criar_lancamento.assert_called_once()
         lanc = self.mock_repos.transacoes.criar_lancamento.call_args[0][0]
         self.assertEqual(lanc.tipo, TipoTransacao.REEMBOLSO)
-        self.assertEqual(lanc.pessoa, "Michele")
-        self.assertEqual(lanc.valor, Decimal("145.87"))
+        self.assertEqual(lanc.pessoa, "Amigo")
+        self.assertEqual(lanc.valor, Decimal("150.00"))
         self.assertEqual(lanc.conta_ou_cartao, "Santander Conta")
 
         chamada = self.mock_telegram.enviar_mensagem.call_args
         self.assertIn("Reembolso Registrado no Notion", chamada[0][0])
-        self.assertIn("Michele", chamada[0][0])
+        self.assertIn("Amigo", chamada[0][0])
         markup = chamada[1].get("reply_markup", {})
         self.assertEqual(markup["inline_keyboard"][0][0]["callback_data"], "excluir:page-reemb-1")
 
@@ -350,13 +350,13 @@ class TestTelegramBotServicePrevistos(unittest.TestCase):
             nome="IPCA+",
             tipo="Renda Fixa - Inflação (IPCA+)",
             qtd=Decimal("1"),
-            valor_atual=Decimal("3500.00"),
-            valor_investido=Decimal("3508.24"),
+            valor_atual=Decimal("3000.00"),
+            valor_investido=Decimal("2800.00"),
         )
         self.mock_repos.transacoes.criar_lancamento.return_value = "tx-aporte-1"
 
         self.service._tratar_comando(
-            "/investir IPCA+ ; 375,13 ; santander conta ; 08/11/2026",
+            "/investir IPCA+ ; 500,00 ; santander conta ; 08/11/2026",
             chat_id="123456",
             dry_run=False,
         )
@@ -364,7 +364,7 @@ class TestTelegramBotServicePrevistos(unittest.TestCase):
         self.mock_repos.transacoes.criar_lancamento.assert_called_once()
         lanc = self.mock_repos.transacoes.criar_lancamento.call_args[0][0]
         self.assertEqual(lanc.tipo, TipoTransacao.MOVIMENTACAO_INTERNA)
-        self.assertEqual(lanc.valor, Decimal("375.13"))
+        self.assertEqual(lanc.valor, Decimal("500.00"))
         self.assertEqual(lanc.conta_ou_cartao, "Santander Conta")
         self.assertEqual(lanc.data_compra, date(2026, 11, 8))
         self.assertEqual(lanc.categoria, "Investimento")
@@ -372,7 +372,7 @@ class TestTelegramBotServicePrevistos(unittest.TestCase):
         self.service._invest_service.registrar_aporte.assert_called_once_with(
             ativo_id="ativo-ipca",
             ativo_nome="IPCA+",
-            valor_total=Decimal("375.13"),
+            valor_total=Decimal("500.00"),
             data_aporte=date(2026, 11, 8),
             quantidade=None,
             dry_run=False,
@@ -380,7 +380,7 @@ class TestTelegramBotServicePrevistos(unittest.TestCase):
         msg = self.mock_telegram.enviar_mensagem.call_args[0][0]
         self.assertIn("Investimento Registrado no Notion", msg)
         self.assertIn("IPCA+", msg)
-        self.assertIn("375,13", msg)
+        self.assertIn("500,00", msg)
 
     def test_parcelas_repository_cria_e_reaproveita_idempotente(self) -> None:
         from financas.domain.models import LancamentoTransacao, StatusTransacao
@@ -394,8 +394,8 @@ class TestTelegramBotServicePrevistos(unittest.TestCase):
 
         repo = ParcelasRepository(mock_client, "db-parcelas", mock_catalogo)
         lanc = LancamentoTransacao(
-            descricao="PayU *AD - Parc 01/05",
-            valor=Decimal("110.00"),
+            descricao="Loja Exemplo - Parc 01/05",
+            valor=Decimal("100.00"),
             data_compra=date(2026, 11, 12),
             mes_competencia="2026-Novembro",
             tipo=TipoTransacao.SAIDA,
@@ -440,12 +440,12 @@ class TestTelegramBotServicePrevistos(unittest.TestCase):
         from financas.telegram.reports import TelegramReportBuilder
 
         self.mock_repos.meses.obter_resumo_mes.return_value = {
-            "meus_gastos": Decimal("2390.16"),
-            "saldo_livre": Decimal("1326.57"),
-            "meta_mensal": Decimal("2850.00"),
+            "meus_gastos": Decimal("1200.00"),
+            "saldo_livre": Decimal("900.00"),
+            "meta_mensal": Decimal("2000.00"),
             "receita": Decimal("0.00"),
-            "fatura_santander": Decimal("1511.82"),
-            "fatura_bradesco": Decimal("428.15"),
+            "fatura_santander": Decimal("800.00"),
+            "fatura_bradesco": Decimal("350.00"),
             "fatura_inter": Decimal("0.00"),
         }
         self.mock_client.query_database.return_value = []
@@ -459,9 +459,9 @@ class TestTelegramBotServicePrevistos(unittest.TestCase):
 
         self.mock_repos.meses.obter_resumo_mes.assert_called_once_with("2026-Dezembro")
         self.assertIn("2026-Dezembro", texto)
-        self.assertIn("Santander Credito: *R$ 1.511,82*", texto)
-        self.assertIn("Bradesco Credito: *R$ 428,15*", texto)
-        self.assertIn("~R$ 44,22/dia (ou R$ 309,53/sem)", texto)
+        self.assertIn("Santander Credito: *R$ 800,00*", texto)
+        self.assertIn("Bradesco Credito: *R$ 350,00*", texto)
+        self.assertIn("~R$ 30,00/dia (ou R$ 210,00/sem)", texto)
         self.assertNotIn("Inter Credito", texto)
         self.mock_repos.transacoes.listar_previstos_periodo.assert_called_once_with(
             self.mock_repos.meses.id_mes.return_value,
@@ -555,7 +555,7 @@ class TestTelegramBotServicePrevistos(unittest.TestCase):
         ]
         self.mock_repos.parcelas.listar_parcelas_ativas.return_value = [
             {
-                "gasto": "Ar condicionado",
+                "gasto": "Eletrodomestico",
                 "parcela_atual": 11,
                 "total_parcelas": 12,
                 "valor_parcela": Decimal("300.00"),

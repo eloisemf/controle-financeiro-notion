@@ -25,7 +25,7 @@ class TelegramClient:
         token: str,
         chat_id: str | int | None = None,
         timeout_s: int = 30,
-        max_retries: int = 3,
+        max_retries: int = 5,
         backoff_s: float = 1.5,
     ) -> None:
         if not token or not token.strip():

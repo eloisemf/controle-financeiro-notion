@@ -176,7 +176,7 @@ class PessoasRepository(BaseNotionRepository):
             if re.search(rf"\b{re.escape(chave_limpa)}\b", nome_limpo):
                 return nome_oficial
 
-        # 3. Normalização fonética de sufixos comuns (ex: michele / micheli / michelly)
+        # 3. Normalização fonética de sufixos comuns (ex: camila / camilla / camilly)
         def _fonetico(s: str) -> str:
             s = re.sub(r"([a-z])\1+", r"\1", s)
             return re.sub(r"[eyi]+$", "i", s)

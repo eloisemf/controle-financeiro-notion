@@ -234,15 +234,15 @@ class TestServicesAndDryRun(unittest.TestCase):
         """Lançamento manual no Telegram enviado até ±2 dias depois concilia sem duplicar."""
         tx_repo = FakeTransacoesRepo()
         tx_repo.chaves_mes["2026-Novembro"] = {
-            ChaveIdempotencia("", 3875, "2026-Novembro", "santader credito", "2026-11-11"): "page_tg_shopee"
+            ChaveIdempotencia("", 4500, "2026-Novembro", "santader credito", "2026-11-11"): "page_tg_loja"
         }
         repos, _, _ = _criar_fake_repos([], tx_repo)
         service = FaturaIngestionService(client=None, config=self.config, repos=repos)
 
         lancamentos = [
             LancamentoTransacao(
-                descricao="SHOPEE *HLCamiseta",
-                valor=Decimal("38.75"),
+                descricao="LOJA ONLINE *ITEMA",
+                valor=Decimal("45.00"),
                 data_compra=date(2026, 11, 10),
                 mes_competencia="2026-Novembro",
                 tipo=TipoTransacao.SAIDA,
@@ -253,22 +253,22 @@ class TestServicesAndDryRun(unittest.TestCase):
         rel = service.importar_lancamentos(lancamentos, dry_run=False)
         self.assertEqual(len(rel.gravados), 0)
         self.assertEqual(len(rel.conciliados_previsto_para_realizado), 1)
-        self.assertEqual(tx_repo.nomes_fatura_preenchidos, [("page_tg_shopee", "SHOPEE *HLCamiseta")])
+        self.assertEqual(tx_repo.nomes_fatura_preenchidos, [("page_tg_loja", "LOJA ONLINE *ITEMA")])
 
     def test_ingestion_ignora_variacao_ocr_mesmo_dia_e_valor(self) -> None:
         """Pequenas diferenças de OCR no mesmo dia/valor/conta são reconhecidas como idempotentes."""
         tx_repo = FakeTransacoesRepo()
         tx_repo.chaves_mes["2026-Novembro"] = {
-            ChaveIdempotencia("pg .nuvem sabic", 2968, "2026-Novembro", "santander credito", "2026-11-09"): "page_ocr_1",
-            ChaveIdempotencia("andrezanardopere", 2000, "2026-Novembro", "santander credito", "2026-11-07"): "page_ocr_2",
+            ChaveIdempotencia("pg .nuvem loja", 3500, "2026-Novembro", "santander credito", "2026-11-09"): "page_ocr_1",
+            ChaveIdempotencia("comerciolocalex", 2000, "2026-Novembro", "santander credito", "2026-11-07"): "page_ocr_2",
         }
         repos, _, _ = _criar_fake_repos([], tx_repo)
         service = FaturaIngestionService(client=None, config=self.config, repos=repos)
 
         lancamentos = [
             LancamentoTransacao(
-                descricao="PG *NUVEM SABICHONAS",
-                valor=Decimal("29.68"),
+                descricao="PG *NUVEM LOJAEXEMPLO",
+                valor=Decimal("35.00"),
                 data_compra=date(2026, 11, 9),
                 mes_competencia="2026-Novembro",
                 tipo=TipoTransacao.SAIDA,
@@ -276,7 +276,7 @@ class TestServicesAndDryRun(unittest.TestCase):
                 conta_ou_cartao="Santander Credito",
             ),
             LancamentoTransacao(
-                descricao="AndreaZanardoPere",
+                descricao="ComercioLocalEx",
                 valor=Decimal("20.00"),
                 data_compra=date(2026, 11, 7),
                 mes_competencia="2026-Novembro",
@@ -355,21 +355,21 @@ class TestServicesAndDryRun(unittest.TestCase):
 
         chave_manual_parc = ChaveIdempotencia(
             data_iso="2026-11-12",
-            centavos=11000,
+            centavos=10000,
             conta_norm="santander credito",
             mes_competencia="2026-novembro",
             descricao_norm="tenis - parc 01/05",
         )
         chave_fatura_parc = ChaveIdempotencia(
             data_iso="2026-11-12",
-            centavos=11000,
+            centavos=10000,
             conta_norm="santander credito",
             mes_competencia="2026-novembro",
-            descricao_norm="payu *ad - parc 01/05",
+            descricao_norm="loja *calcados - parc 01/05",
         )
         chave_outra_parcela = ChaveIdempotencia(
             data_iso="2026-11-12",
-            centavos=11000,
+            centavos=10000,
             conta_norm="santander credito",
             mes_competencia="2026-novembro",
             descricao_norm="tenis - parc 02/05",
@@ -506,34 +506,34 @@ class TestServicesAndDryRun(unittest.TestCase):
         chaves_mes = {
             ChaveIdempotencia(
                 data_iso="2026-11-11",
-                centavos=3875,
+                centavos=4000,
                 conta_norm="santander credito",
                 mes_competencia="2026-novembro",
-                descricao_norm="shopee *hlcamiseta",
+                descricao_norm="loja *itema",
             ): "p1",
             ChaveIdempotencia(
                 data_iso="2026-11-12",
-                centavos=3990,
+                centavos=5000,
                 conta_norm="santander credito",
                 mes_competencia="2026-novembro",
-                descricao_norm="shopee *d0afubi",
+                descricao_norm="loja *c0digo",
             ): "p2",
             ChaveIdempotencia(
                 data_iso="2026-11-11",
-                centavos=11000,
+                centavos=10000,
                 conta_norm="santander credito",
                 mes_competencia="2026-novembro",
-                descricao_norm="payu *ad - parc 01/05",
+                descricao_norm="loja *calc - parc 01/05",
             ): "p3",
         }
         self.assertIsNotNone(
             FaturaIngestionService._buscar_chave_ocr_equivalente(
                 ChaveIdempotencia(
                     data_iso="2026-11-10",
-                    centavos=3875,
+                    centavos=4000,
                     conta_norm="santander credito",
                     mes_competencia="2026-novembro",
-                    descricao_norm="shopee *hlcamiseta",
+                    descricao_norm="loja *itema",
                 ),
                 chaves_mes,
             )
@@ -542,10 +542,10 @@ class TestServicesAndDryRun(unittest.TestCase):
             FaturaIngestionService._buscar_chave_ocr_equivalente(
                 ChaveIdempotencia(
                     data_iso="2026-11-11",
-                    centavos=3990,
+                    centavos=5000,
                     conta_norm="santander credito",
                     mes_competencia="2026-novembro",
-                    descricao_norm="shopee *doafutilidades",
+                    descricao_norm="loja *codigocompleto",
                 ),
                 chaves_mes,
             )
@@ -554,10 +554,10 @@ class TestServicesAndDryRun(unittest.TestCase):
             FaturaIngestionService._buscar_chave_ocr_equivalente(
                 ChaveIdempotencia(
                     data_iso="2026-11-11",
-                    centavos=11003,
+                    centavos=10003,
                     conta_norm="santander credito",
                     mes_competencia="2026-novembro",
-                    descricao_norm="payu *adidas - parc 01/05",
+                    descricao_norm="loja *calcados - parc 01/05",
                 ),
                 chaves_mes,
             )

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import base64
+import calendar
 import csv
+from dataclasses import replace
 from datetime import date
 from decimal import Decimal
 import io
@@ -256,6 +258,9 @@ class SantanderCartoesPdfParser(BasePdfParser):
     _RE_LINHA_LANCAMENTO = re.compile(
         r"^(?:[1-9]\s+)?(\d{2})/(\d{2})\s+(.+?)(?:\s+(\d{2})/(\d{2}))?\s+(-?[\d\.]+,\d{2})(?:\s+[\d\.,\-]+)?$"
     )
+    _RE_SALDO_ANTERIOR = re.compile(r"^saldo\s+anterior\s+(-?[\d\.]+,\d{2})", re.IGNORECASE)
+    _RE_TOTAL_PAGAMENTOS = re.compile(r"^\(-\)\s*total\s+de\s+pagamentos\s+(-?[\d\.]+,\d{2})", re.IGNORECASE)
+    _RE_SALDO_FATURA = re.compile(r"^\(=\)\s*saldo\s+desta\s+fatura\s+(-?[\d\.]+,\d{2})", re.IGNORECASE)
 
     def __init__(
         self,
@@ -401,7 +406,126 @@ class SantanderCartoesPdfParser(BasePdfParser):
                 )
             )
 
-        return lancamentos
+        saldo_ant, tot_pag, saldo_fat = self._extrair_resumo_fatura(texto)
+        return self._separar_ciclo_atual_se_consolidada(
+            lancamentos, ano_comp, mes_comp, saldo_ant, tot_pag, saldo_fat
+        )
+
+    @classmethod
+    def _extrair_resumo_fatura(
+        cls, texto: str
+    ) -> tuple[Decimal | None, Decimal | None, Decimal | None]:
+        """Extrai `(saldo_anterior, total_pagamentos, saldo_desta_fatura)` do Resumo da Fatura."""
+        em_resumo = False
+        saldo_ant: Decimal | None = None
+        tot_pag: Decimal | None = None
+        saldo_fat: Decimal | None = None
+
+        for ln in texto.splitlines():
+            limpa = ln.strip()
+            if not limpa:
+                continue
+            if limpa.lower().startswith("resumo da fatura"):
+                em_resumo = True
+                continue
+            if not em_resumo:
+                continue
+
+            if m_ant := cls._RE_SALDO_ANTERIOR.match(limpa):
+                saldo_ant = para_decimal(m_ant.group(1))
+            elif m_pag := cls._RE_TOTAL_PAGAMENTOS.match(limpa):
+                tot_pag = para_decimal(m_pag.group(1))
+            elif m_fat := cls._RE_SALDO_FATURA.match(limpa):
+                saldo_fat = para_decimal(m_fat.group(1))
+
+        return saldo_ant, tot_pag, saldo_fat
+
+    def _separar_ciclo_atual_se_consolidada(
+        self,
+        itens: list[LancamentoTransacao],
+        ano_comp: int,
+        mes_comp: int,
+        saldo_anterior: Decimal | None,
+        total_pagamentos: Decimal | None,
+        saldo_desta_fatura: Decimal | None,
+    ) -> list[LancamentoTransacao]:
+        """Separa PDFs consolidados de 2 ciclos mantendo o ciclo atual e parcelas futuras em aberto."""
+        if (
+            saldo_anterior is None
+            or total_pagamentos is None
+            or saldo_desta_fatura is None
+        ):
+            return itens
+
+        excesso_pagamentos = total_pagamentos - saldo_anterior
+        if excesso_pagamentos <= Decimal("0.00") or saldo_desta_fatura <= Decimal("0.00"):
+            return itens
+
+        cartao = _obter_cartao_config(self._cartoes, self._nome_cartao)
+        ano_ant, mes_ant = adicionar_meses(ano_comp, mes_comp, -1)
+        data_fech_ant = self._calc.data_fechamento(cartao, ano_ant, mes_ant)
+        tolerancia = Decimal("0.05")
+
+        for inclusivo in (True, False):
+            anterior: list[LancamentoTransacao] = []
+            atual: list[LancamentoTransacao] = []
+
+            for it in itens:
+                if it.eh_parcelado:
+                    ano_orig, mes_orig = self._calc.competencia_fatura(cartao, it.data_compra)
+                    ano_p, mes_p = adicionar_meses(ano_orig, mes_orig, (it.parcela_atual or 1) - 1)
+                    vai_anterior = (ano_p, mes_p) < (ano_comp, mes_comp)
+                else:
+                    vai_anterior = (
+                        it.data_compra <= data_fech_ant
+                        if inclusivo
+                        else it.data_compra < data_fech_ant
+                    )
+                if vai_anterior:
+                    anterior.append(it)
+                else:
+                    atual.append(it)
+
+            if not anterior or not atual:
+                continue
+
+            soma_ant = sum((it.valor for it in anterior), Decimal("0.00"))
+            soma_atual = sum((it.valor for it in atual), Decimal("0.00"))
+            if (
+                abs(soma_ant - excesso_pagamentos) <= tolerancia
+                and abs(soma_atual - saldo_desta_fatura) <= tolerancia
+            ):
+                ano_prox, mes_prox = adicionar_meses(ano_comp, mes_comp, 1)
+                mes_prox_label = formatar_mes_competencia(ano_prox, mes_prox)
+                ultimo_dia_prox = calendar.monthrange(ano_prox, mes_prox)[1]
+
+                futuros_carregados: list[LancamentoTransacao] = []
+                for it in anterior:
+                    if it.eh_parcelado and it.parcela_atual and it.total_parcelas and it.parcela_atual < it.total_parcelas:
+                        futuros_carregados.append(
+                            replace(
+                                it,
+                                parcela_atual=it.parcela_atual + 1,
+                                data_compra=date(
+                                    ano_prox,
+                                    mes_prox,
+                                    min(it.data_compra.day, ultimo_dia_prox),
+                                ),
+                                mes_competencia=mes_prox_label,
+                            )
+                        )
+
+                logger.info(
+                    "Fatura consolidada de 2 ciclos detectada (%d itens pagos R$ %s, %d do ciclo atual R$ %s, %d parcelas futuras carregadas).",
+                    len(anterior),
+                    soma_ant,
+                    len(atual),
+                    soma_atual,
+                    len(futuros_carregados),
+                )
+                return atual + futuros_carregados
+
+        return itens
 
 
 class SantanderCartaoVisionParser(BaseDocumentoParser):

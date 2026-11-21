@@ -516,9 +516,9 @@ class MensagemGastoParser:
         """Extrai pessoa, valor e conta de destino a partir do comando `/reembolso`.
 
         Aceita:
-        • `/reembolso michele ; 145,87`
-        • `/reembolso michele ; 145,87 ; inter`
-        • `/reembolso michele 145,87`
+        • `/reembolso amigo ; 150,00`
+        • `/reembolso amigo ; 150,00 ; inter`
+        • `/reembolso amigo 150,00`
         """
         limpo = re.sub(r"^/(?:reembolso|recebi|pagou)\b", "", texto.strip(), flags=re.IGNORECASE).strip()
         if not limpo:
