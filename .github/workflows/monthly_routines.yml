@@ -2,8 +2,8 @@ name: Rotinas Mensais (Gastos Fixos e Fechamento)
 
 on:
   schedule:
-    # Todo dia 1º do mês às 09:00 UTC (06:00 Horário de Brasília)
-    - cron: '0 9 1 * *'
+    # Todo dia 20 do mês às 09:00 UTC (06:00 Horário de Brasília)
+    - cron: '0 9 20 * *'
   workflow_dispatch:
     inputs:
       acao:
