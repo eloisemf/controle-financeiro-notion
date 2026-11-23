@@ -461,7 +461,7 @@ class TestTelegramBotServicePrevistos(unittest.TestCase):
         self.assertIn("2026-Dezembro", texto)
         self.assertIn("Santander Credito: *R$ 800,00*", texto)
         self.assertIn("Bradesco Credito: *R$ 350,00*", texto)
-        self.assertIn("~R$ 30,00/dia (ou R$ 210,00/sem)", texto)
+        self.assertNotIn("Limite diário seguro", texto)
         self.assertNotIn("Inter Credito", texto)
         self.mock_repos.transacoes.listar_previstos_periodo.assert_called_once_with(
             self.mock_repos.meses.id_mes.return_value,

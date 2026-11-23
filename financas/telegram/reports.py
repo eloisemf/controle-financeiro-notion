@@ -10,7 +10,6 @@ from typing import Any
 from financas.domain.billing import (
     adicionar_meses,
     competencia_ciclo_atual,
-    dias_restantes_ciclo,
     formatar_mes_competencia,
 )
 from financas.domain.models import Periodicidade, formatar_brl
@@ -58,8 +57,6 @@ class TelegramReportBuilder:
         saldo_livre = dados_mes.get("saldo_livre", Decimal("0.00"))
         meta_mensal = dados_mes.get("meta_mensal", Decimal("0.00"))
 
-        dias_restantes = dias_restantes_ciclo(hoje)
-
         linhas.append("💸 *Orçamento & Gastos:*")
         linhas.append(f"  • Meus Gastos: *{formatar_brl(meus_gastos)}*")
         if meta_mensal > 0:
@@ -68,12 +65,6 @@ class TelegramReportBuilder:
 
         sinal_livre = "🟢" if saldo_livre >= 0 else "🔴"
         linhas.append(f"  • Saldo Livre: {sinal_livre} *{formatar_brl(saldo_livre)}*")
-        if saldo_livre > 0:
-            media_dia = saldo_livre / Decimal(dias_restantes)
-            media_sem = media_dia * 7
-            linhas.append(
-                f"  • Limite diário seguro: ~{formatar_brl(media_dia)}/dia (ou {formatar_brl(media_sem)}/sem)"
-            )
 
         linhas.append("")
         linhas.append("💳 *Faturas dos Cartões:*")
