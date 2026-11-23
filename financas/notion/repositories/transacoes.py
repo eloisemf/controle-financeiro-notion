@@ -321,10 +321,15 @@ class TransacoesRepository(BaseNotionRepository):
             cat_ids = NotionParser.prop_relation_ids(p, ColunasTransacoes.CATEGORIA)
             uso_ids = NotionParser.prop_relation_ids(p, ColunasTransacoes.TIPO_SAIDA)
             parc_ids = NotionParser.prop_relation_ids(p, ColunasTransacoes.COMPRA_PARCELADA)
+            conta_ids = NotionParser.prop_relation_ids(p, ColunasTransacoes.SAIDA_DE)
             itens.append(
                 {
                     "nome": NotionParser.page_title(p),
                     "valor_meu": valor_meu,
+                    "conta": (
+                        self._catalogo.nome_conta_por_id(conta_ids[0]) if conta_ids else None
+                    )
+                    or "Conta/Cartão",
                     "categoria": (
                         self._catalogo.nome_categoria_por_id(cat_ids[0]) if cat_ids else None
                     )

@@ -448,6 +448,9 @@ class TestTelegramBotServicePrevistos(unittest.TestCase):
             "fatura_bradesco": Decimal("350.00"),
             "fatura_inter": Decimal("0.00"),
         }
+        self.mock_repos.transacoes.listar_analise_gastos_mes.return_value = [
+            {"nome": "Mercado", "valor_meu": Decimal("600.00"), "conta": "Santander Credito"},
+        ]
         self.mock_client.query_database.return_value = []
 
         builder = TelegramReportBuilder(
@@ -459,7 +462,10 @@ class TestTelegramBotServicePrevistos(unittest.TestCase):
 
         self.mock_repos.meses.obter_resumo_mes.assert_called_once_with("2026-Dezembro")
         self.assertIn("2026-Dezembro", texto)
-        self.assertIn("Santander Credito: *R$ 800,00*", texto)
+        self.assertIn(
+            "Santander Credito: *R$ 800,00* (Meu: *R$ 600,00* | Terceiros: R$ 200,00)",
+            texto,
+        )
         self.assertIn("Bradesco Credito: *R$ 350,00*", texto)
         self.assertNotIn("Limite diário seguro", texto)
         self.assertNotIn("Inter Credito", texto)

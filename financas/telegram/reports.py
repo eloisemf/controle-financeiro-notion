@@ -70,8 +70,17 @@ class TelegramReportBuilder:
         linhas.append("💳 *Faturas dos Cartões:*")
         if not cartoes:
             linhas.append("  • Nenhuma fatura ativa encontrada.")
+        minha_parte_cartoes = self._obter_minha_parte_por_conta(mes_label) if cartoes else {}
         for nome_cartao, val_fatura in cartoes.items():
-            linhas.append(f"  • {nome_cartao}: *{formatar_brl(val_fatura)}*")
+            val_meu = minha_parte_cartoes.get(nome_cartao)
+            if val_meu is not None and Decimal("0.00") <= val_meu < val_fatura:
+                val_terceiros = val_fatura - val_meu
+                linhas.append(
+                    f"  • {nome_cartao}: *{formatar_brl(val_fatura)}* "
+                    f"(Meu: *{formatar_brl(val_meu)}* | Terceiros: {formatar_brl(val_terceiros)})"
+                )
+            else:
+                linhas.append(f"  • {nome_cartao}: *{formatar_brl(val_fatura)}*")
 
         if proximos_fixos:
             linhas.append("")
@@ -335,7 +344,20 @@ class TelegramReportBuilder:
     def _listar_analise_mes(self, mes_label: str) -> list[dict[str, Any]]:
         try:
             mes_id = self._repos.meses.id_mes(mes_label)
-            return self._repos.transacoes.listar_analise_gastos_mes(mes_id)
+            itens = self._repos.transacoes.listar_analise_gastos_mes(mes_id)
+            return itens if isinstance(itens, list) else []
         except Exception as exc:
             logger.warning("Falha ao consultar análise do mês %s: %s", mes_label, exc)
             return []
+
+    def _obter_minha_parte_por_conta(self, mes_label: str) -> dict[str, Decimal]:
+        gastos = self._listar_analise_mes(mes_label)
+        if not gastos:
+            return {}
+        por_conta: dict[str, Decimal] = {}
+        for item in gastos:
+            conta = item.get("conta")
+            val = item.get("valor_meu")
+            if isinstance(conta, str) and isinstance(val, Decimal):
+                por_conta[conta] = por_conta.get(conta, Decimal("0.00")) + val
+        return por_conta
