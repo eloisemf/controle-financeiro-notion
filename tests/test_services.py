@@ -325,6 +325,27 @@ class TestServicesAndDryRun(unittest.TestCase):
         self.assertEqual(args_fix.mes_competencia, "2026-Dezembro")
         self.assertTrue(args_fix.dry_run)
 
+    def test_executar_telegram_checar_previstos_e_semanal_sem_unbound_qtd(self) -> None:
+        from financas import cli
+
+        mock_bot = MagicMock()
+        mock_bot.__enter__.return_value = mock_bot
+        mock_bot.verificar_e_notificar_gastos_previstos.return_value = 0
+        mock_bot.disparar_resumo_semanal.return_value = "resumo"
+
+        with (
+            patch.object(cli.AppConfig, "from_env", return_value=self.config),
+            patch.object(cli, "NotionClient"),
+            patch("financas.telegram.service.TelegramBotService", return_value=mock_bot),
+        ):
+            args_prev = cli.construir_parser_telegram().parse_args(["--checar-previstos", "--dry-run"])
+            cli.executar_telegram(args_prev)
+            mock_bot.verificar_e_notificar_gastos_previstos.assert_called_once_with(dry_run=True)
+
+            args_sem = cli.construir_parser_telegram().parse_args(["--semanal", "--dry-run"])
+            cli.executar_telegram(args_sem)
+            mock_bot.disparar_resumo_semanal.assert_called_once_with(dry_run=True)
+
     def test_notion_client_paginacao_e_erro_nao_json(self) -> None:
         with NotionClient(token="fake-token", min_interval_s=0.0, max_retries=2) as client:
             resp_p1 = MagicMock(

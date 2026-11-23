@@ -435,7 +435,7 @@ def executar_telegram(args: argparse.Namespace) -> None:
             ):
                 logger.info("Verificando mensagens pendentes no Telegram...")
                 qtd = bot_service.processar_mensagens_pendentes(dry_run=args.dry_run)
-            print(f"✅ Processamento concluído: {qtd} mensagem(ns) tratada(s).")
+                print(f"✅ Processamento concluído: {qtd} mensagem(ns) tratada(s).")
 
 
 def construir_parser_principal() -> argparse.ArgumentParser:
