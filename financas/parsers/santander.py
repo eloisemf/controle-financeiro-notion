@@ -631,7 +631,7 @@ class SantanderCartaoVisionParser(BaseDocumentoParser):
                     total_parcelas=p_total,
                 )
             )
-        return lancamentos
+        return self._ajustar_competencia_parcelas_fatura_aberta(lancamentos)
 
     def parse_imagem_gemini(
         self, image_path: Path, ano_referencia: int | None = None
@@ -723,4 +723,41 @@ class SantanderCartaoVisionParser(BaseDocumentoParser):
                     total_parcelas=obj.get("total_parcelas"),
                 )
             )
-        return lancamentos
+        return self._ajustar_competencia_parcelas_fatura_aberta(lancamentos)
+
+    def _ajustar_competencia_parcelas_fatura_aberta(
+        self, lancamentos: list[LancamentoTransacao]
+    ) -> list[LancamentoTransacao]:
+        """Desloca a competência e data das parcelas `p_atual > 1` em prints de fatura aberta."""
+        if not lancamentos:
+            return lancamentos
+
+        cartao = _obter_cartao_config(self._cartoes, self._nome_cartao)
+        comp_base: tuple[int, int] | None = None
+        for it in lancamentos:
+            if not (it.eh_parcelado and (it.parcela_atual or 1) > 1):
+                c = self._calc.competencia_fatura(cartao, it.data_compra)
+                if comp_base is None or c > comp_base:
+                    comp_base = c
+
+        ajustados: list[LancamentoTransacao] = []
+        for it in lancamentos:
+            if it.eh_parcelado and it.parcela_atual and it.parcela_atual > 1:
+                ano_orig, mes_orig = self._calc.competencia_fatura(cartao, it.data_compra)
+                ano_p, mes_p = adicionar_meses(ano_orig, mes_orig, it.parcela_atual - 1)
+                if comp_base is not None and (ano_p, mes_p) < comp_base:
+                    ano_p, mes_p = comp_base
+                mes_comp_novo = formatar_mes_competencia(ano_p, mes_p)
+                nova_data = self._calc.data_parcela_na_competencia(
+                    it.data_compra, mes_comp_novo
+                )
+                ajustados.append(
+                    replace(
+                        it,
+                        data_compra=nova_data,
+                        mes_competencia=mes_comp_novo,
+                    )
+                )
+            else:
+                ajustados.append(it)
+        return ajustados

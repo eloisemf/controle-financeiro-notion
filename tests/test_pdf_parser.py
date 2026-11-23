@@ -206,6 +206,20 @@ class TestDocumentParsers(unittest.TestCase):
         self.assertEqual(futuros[0].valor, Decimal("200.00"))
         self.assertEqual(futuros[0].data_compra, date(2026, 12, 25))
 
+    def test_vision_parser_desloca_competencia_parcela_fatura_aberta(self) -> None:
+        from financas.parsers.santander import SantanderCartaoVisionParser
+
+        parser = SantanderCartaoVisionParser()
+        texto = (
+            "21/11/2026 CINEMA SHOPPING R$ 50,00\n"
+            "11/11/2026 LOJA CALCADOS 02/05 R$ 100,00\n"
+        )
+        itens = parser.parse_texto_colado(texto, ano_referencia=2026)
+        self.assertEqual(len(itens), 2)
+        self.assertEqual(itens[0].mes_competencia, "2026-Dezembro")
+        self.assertEqual(itens[1].mes_competencia, "2026-Dezembro")
+        self.assertEqual(itens[1].data_compra, date(2026, 12, 11))
+
 
 if __name__ == "__main__":
     unittest.main()
