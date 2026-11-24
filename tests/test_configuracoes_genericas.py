@@ -89,8 +89,8 @@ class TestConfiguracoesGenericas(unittest.TestCase):
         self.assertEqual(classificador.classificar_descricao("Conta de Luz Enel")[0], "Luz")
         self.assertEqual(classificador.classificar_descricao("Boleto Condomínio Edifício")[0], "Condominio")
         self.assertEqual(classificador.classificar_descricao("Pix Aluguel Imóvel")[0], "Aluguel")
-        self.assertEqual(classificador.classificar_descricao("correio*Correios Cel")[0], "Internet")
-        self.assertEqual(classificador.classificar_descricao("Recarga Celular")[0], "Internet")
+        self.assertEqual(classificador.classificar_descricao("correio*Correios Cel")[0], "Celular")
+        self.assertEqual(classificador.classificar_descricao("Recarga Celular")[0], "Celular")
 
     def test_catalogo_obter_cartoes_configurados_do_notion(self) -> None:
         fake_paginas = [

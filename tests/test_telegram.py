@@ -31,7 +31,7 @@ class TestTelegramParsers(unittest.TestCase):
         assert gasto is not None
         self.assertEqual(gasto.descricao, "filtro de cafe")
         self.assertEqual(gasto.valor, Decimal("20.00"))
-        self.assertEqual(gasto.categoria, "Casa")
+        self.assertEqual(gasto.categoria, "Casa & Cozinha")
         self.assertEqual(gasto.conta_ou_cartao, "Santander Credito")
         self.assertEqual(gasto.uso_dinheiro, "Nao essencial")
 
@@ -49,7 +49,7 @@ class TestTelegramParsers(unittest.TestCase):
         self.assertEqual(gasto.descricao, "filtro de café")
         self.assertEqual(gasto.valor, Decimal("20.00"))
         self.assertEqual(gasto.conta_ou_cartao, "Santander Credito")
-        self.assertEqual(gasto.categoria, "Casa")
+        self.assertEqual(gasto.categoria, "Casa & Cozinha")
         self.assertEqual(gasto.uso_dinheiro, "Nao essencial")
         self.assertIsNone(gasto.mes_competencia)
 
@@ -58,7 +58,7 @@ class TestTelegramParsers(unittest.TestCase):
             ("almoco ; 35,90 ; alimentacao ; debito", "Alimentação", "Santander Conta"),
             ("vitamina ; 49,90 ; saude ; santander credito", "Saúde", "Santander Credito"),
             ("bilhete ; 5,00 ; transporte publico ; pix", "Transporte Público", "Santander Conta"),
-            ("ingresso ; 40 ; diversao ; inter", "Diversão", "Inter Credito"),
+            ("ingresso ; 40 ; diversao ; inter", "Lazer", "Inter Credito"),
             ("fone ; 120 ; eletronicos ; amazon", "Eletronicos", "Amazon bradescard"),
         ]
         for texto, cat_esperada, conta_esperada in casos:
@@ -219,7 +219,7 @@ class TestTelegramBotServicePrevistos(unittest.TestCase):
         self.mock_repos.transacoes.criar_lancamento.assert_called_once()
         chamada = self.mock_telegram.enviar_mensagem.call_args
         self.assertIn("filtro de cafe", chamada[0][0])
-        self.assertIn("Casa (Nao essencial)", chamada[0][0])
+        self.assertIn("Casa & Cozinha (Nao essencial)", chamada[0][0])
         markup = chamada[1].get("reply_markup", {})
         botao = markup["inline_keyboard"][0][0]
         self.assertEqual(botao["callback_data"], "excluir:page-novo-1")
