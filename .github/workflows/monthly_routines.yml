@@ -2,8 +2,8 @@ name: Rotinas Mensais (Gastos Fixos e Fechamento)
 
 on:
   schedule:
-    # Todo dia 20 do mês às 09:00 UTC (06:00 Horário de Brasília)
-    - cron: '0 9 20 * *'
+    # Todo dia 24 do mês às 23:00 UTC (20:00 Horário de Brasília)
+    - cron: '0 23 24 * *'
   workflow_dispatch:
     inputs:
       acao:
@@ -67,7 +67,7 @@ jobs:
           python lancar_fixos.py --notificar
 
       - name: Fechar Mês de Investimentos (Snapshot Patrimonial)
-        if: ${{ inputs.acao == 'fechar_mes' || inputs.acao == 'ambos' }}
+        if: ${{ github.event_name == 'schedule' || inputs.acao == 'fechar_mes' || inputs.acao == 'ambos' }}
         run: |
           python atualizar_investimentos.py --fechar-mes
 

@@ -657,6 +657,30 @@ class TestTelegramBotServicePrevistos(unittest.TestCase):
         self.assertEqual(lanc.conta_destino, "Santander Credito")
         self.assertEqual(lanc.mes_competencia, "2026-Novembro")
 
+    def test_callback_duplicado_no_mesmo_lote_e_ignorado(self) -> None:
+        self.mock_repos.transacoes.criar_lancamento.return_value = "page-pf-1"
+        self.mock_telegram.obter_atualizacoes.return_value = [
+            {
+                "update_id": 10,
+                "callback_query": {
+                    "id": "cb-1",
+                    "data": "pf:Santander Credito:120050:2026-Novembro",
+                    "from": {"id": "123456"},
+                },
+            },
+            {
+                "update_id": 11,
+                "callback_query": {
+                    "id": "cb-2",
+                    "data": "pf:Santander Credito:120050:2026-Novembro",
+                    "from": {"id": "123456"},
+                },
+            },
+        ]
+        qtd = self.service.processar_mensagens_pendentes(dry_run=False)
+        self.assertEqual(qtd, 1)
+        self.mock_repos.transacoes.criar_lancamento.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

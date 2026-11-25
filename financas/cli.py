@@ -130,7 +130,7 @@ def construir_parser_fixos(
     subparser: argparse.ArgumentParser | None = None,
 ) -> argparse.ArgumentParser:
     hoje = date.today()
-    ano_ciclo, mes_ciclo = competencia_ciclo_atual(hoje, dia_virada=20)
+    ano_ciclo, mes_ciclo = competencia_ciclo_atual(hoje, dia_virada=24)
     mes_atual_default = formatar_mes_competencia(ano_ciclo, mes_ciclo)
     parser = subparser or argparse.ArgumentParser(
         description="Lança os Gastos Fixos ativos como 'Previsto' para um mês de competência."

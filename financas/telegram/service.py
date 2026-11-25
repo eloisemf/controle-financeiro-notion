@@ -107,6 +107,7 @@ class TelegramBotService:
 
         processadas = 0
         maior_update_id = 0
+        callbacks_vistos: set[str] = set()
 
         for up in updates:
             up_id = up.get("update_id", 0)
@@ -120,6 +121,12 @@ class TelegramBotService:
                 cb_data = str(cb.get("data", ""))
                 cb_from = str(cb.get("from", {}).get("id", ""))
                 if not self.config.telegram_chat_id or cb_from == str(self.config.telegram_chat_id):
+                    if cb_data and cb_data in callbacks_vistos:
+                        logger.info("Callback duplicado ignorado no mesmo lote: %s", cb_data)
+                        self._telegram.responder_callback_query(cb_id)
+                        continue
+                    if cb_data:
+                        callbacks_vistos.add(cb_data)
                     self._tratar_callback(cb_id, cb_data, chat_id=cb_from or str(self.config.telegram_chat_id), dry_run=dry_run)
                     processadas += 1
                 continue
