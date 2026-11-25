@@ -458,7 +458,7 @@ class TestTelegramBotServicePrevistos(unittest.TestCase):
             self.mock_repos,
             self.service._invest_service,
         )
-        texto = builder.gerar_resumo_semanal(data_ref=date(2026, 11, 25))
+        texto = builder.gerar_resumo_semanal(data_ref=date(2026, 11, 26))
 
         self.mock_repos.meses.obter_resumo_mes.assert_called_once_with("2026-Dezembro")
         self.assertIn("2026-Dezembro", texto)
@@ -471,8 +471,8 @@ class TestTelegramBotServicePrevistos(unittest.TestCase):
         self.assertNotIn("Inter Credito", texto)
         self.mock_repos.transacoes.listar_previstos_periodo.assert_called_once_with(
             self.mock_repos.meses.id_mes.return_value,
-            date(2026, 11, 25),
-            date(2026, 12, 5),
+            date(2026, 11, 26),
+            date(2026, 12, 6),
         )
 
     def test_disparar_resumo_semanal_dry_run_e_context_manager(self) -> None:
