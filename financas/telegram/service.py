@@ -11,9 +11,23 @@ import tempfile
 from typing import Any
 
 from financas.config import AppConfig
-from financas.domain.billing import CalculadoraFatura, parse_mes_competencia
+from financas.domain.billing import (
+    CalculadoraFatura,
+    adicionar_meses,
+    competencia_ciclo_atual,
+    formatar_mes_competencia,
+    parse_mes_competencia,
+)
 from financas.domain.classification import ClassificadorCategoria
-from financas.domain.models import formatar_brl
+from financas.domain.models import (
+    LancamentoTransacao,
+    Recorrencia,
+    StatusTransacao,
+    TipoTransacao,
+    decimal_para_centavos,
+    formatar_brl,
+    para_decimal,
+)
 from financas.notion.client import NotionClient
 from financas.notion.repositories import NotionRepositories
 from financas.parsers.router import ExtratorDocumentosFinanceiros
@@ -192,6 +206,8 @@ class TelegramBotService:
                 "• `/reembolso mae ; 200`\n\n"
                 "📸 Você também pode mandar *prints de faturas ou PDFs*!\n\n"
                 "📌 *Comandos disponíveis:*\n"
+                "/salario [valor] — Registra entrada do salário na conta\n"
+                "/pagar_fatura [cartao] ; [valor] — Registra pagamento da fatura\n"
                 "/investir [ativo] ; [valor] — Registra aporte saindo da conta\n"
                 "/reembolso [nome] ; [valor] — Registra Pix recebido de terceiro\n"
                 "/categorias — Lista todas as categorias e contas aceitas\n"
@@ -239,6 +255,12 @@ class TelegramBotService:
                 "`tenis ; 549,99 ; vestuario ; 5x`"
             )
             self._telegram.enviar_mensagem(msg_modelo, chat_id=chat_id)
+
+        elif cmd in ("/salario", "/receita", "/entrada"):
+            self._tratar_salario(comando, chat_id, dry_run=dry_run)
+
+        elif cmd in ("/pagar_fatura", "/pagarfatura", "/pagar"):
+            self._tratar_pagar_fatura(comando, chat_id, dry_run=dry_run)
 
         elif cmd in ("/reembolso", "/recebi", "/pagou", "/pessoas"):
             self._tratar_reembolso(comando, chat_id, dry_run=dry_run)
@@ -325,6 +347,24 @@ class TelegramBotService:
                 "🗑️ *Lançamento Excluído!*\nA despesa foi movida para a lixeira do Notion com sucesso.",
                 chat_id=chat_id,
             )
+        elif data.startswith("pf:"):
+            partes_pf = data.split(":")
+            if len(partes_pf) == 4:
+                _, cartao, centavos_str, mes_comp = partes_pf
+                valor_fatura = (Decimal(centavos_str) / Decimal("100")).quantize(Decimal("0.01"))
+                self._registrar_pagamento_fatura(
+                    cartao=cartao,
+                    valor=valor_fatura,
+                    mes_competencia=mes_comp,
+                    conta_origem="Santander Conta",
+                    chat_id=chat_id,
+                    dry_run=dry_run,
+                )
+                self._telegram.responder_callback_query(
+                    cb_id, texto=f"Pagamento de {cartao} registrado!"
+                )
+            else:
+                self._telegram.responder_callback_query(cb_id)
         else:
             self._telegram.responder_callback_query(cb_id)
 
@@ -720,3 +760,279 @@ class TelegramBotService:
 
         logger.info("Notificados %d gastos previstos para o chat %s.", len(previstos), chat_id)
         return len(previstos)
+
+    def _tratar_salario(self, comando: str, chat_id: str, dry_run: bool = False) -> None:
+        """Processa `/salario Valor [; Conta]` e registra `TipoTransacao.ENTRADA` no Notion."""
+        corpo = comando.split(maxsplit=1)[1].strip() if len(comando.split(maxsplit=1)) > 1 else ""
+        if not corpo:
+            self._telegram.enviar_mensagem(
+                "💰 *COMO REGISTRAR SEU SALÁRIO:*\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Envie: `/salario Valor` *(ou `/salario Valor ; Conta`)*\n\n"
+                "💡 *Exemplos:*\n"
+                "• `/salario 5500`\n"
+                "• `/salario 5500,50 ; santander conta`",
+                chat_id=chat_id,
+            )
+            return
+
+        partes = [p.strip() for p in corpo.split(";") if p.strip()]
+        try:
+            valor = para_decimal(partes[0])
+        except Exception:
+            valor = None
+        if not valor or valor <= 0:
+            self._telegram.enviar_mensagem(
+                "⚠️ Valor inválido. Exemplo: `/salario 5500` ou `/salario 5500,50`.",
+                chat_id=chat_id,
+            )
+            return
+
+        conta = "Santander Conta"
+        if len(partes) > 1:
+            conta_resolvida = self._parser._resolver_conta(partes[1])
+            if conta_resolvida:
+                conta = conta_resolvida
+
+        hoje = date.today()
+        # No dia 25 em diante, o salário recebido compõe a receita do novo ciclo (mês seguinte)
+        if hoje.day >= 25:
+            ano_comp, mes_comp_num = adicionar_meses(hoje.year, hoje.month, 1)
+        else:
+            ano_comp, mes_comp_num = hoje.year, hoje.month
+        mes_competencia = formatar_mes_competencia(ano_comp, mes_comp_num)
+
+        lancamento = LancamentoTransacao(
+            descricao="Salário",
+            valor=valor,
+            data_compra=hoje,
+            mes_competencia=mes_competencia,
+            tipo=TipoTransacao.ENTRADA,
+            categoria="",
+            conta_ou_cartao=conta,
+            recorrencia=Recorrencia.FIXO,
+            status=StatusTransacao.REALIZADO,
+            eh_entrada_na_conta=True,
+        )
+
+        page_id = "dry-run-id"
+        if not dry_run:
+            self._repos.meses.garantir_mes(ano_comp, mes_comp_num)
+            page_id = self._repos.transacoes.criar_lancamento(lancamento)
+
+        msg = (
+            "💰 *Salário Registrado no Notion!*\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"• *Valor:* *{formatar_brl(valor)}*\n"
+            f"• *Entrada em:* {conta}\n"
+            f"• *Mês Competência:* {mes_competencia}\n"
+            "• *Status:* *Realizado* 🟢\n"
+            "━━━━━━━━━━━━━━━━━━━━━━"
+        )
+        botoes = {
+            "inline_keyboard": [
+                [{"text": "🗑️ Desfazer / Excluir Lançamento", "callback_data": f"excluir:{page_id}"}]
+            ]
+        }
+        self._telegram.enviar_mensagem(msg, chat_id=chat_id, reply_markup=botoes)
+
+    def _tratar_pagar_fatura(self, comando: str, chat_id: str, dry_run: bool = False) -> None:
+        """Processa `/pagar_fatura Cartao ; Valor [; Conta Origem]`."""
+        corpo = comando.split(maxsplit=1)[1].strip() if len(comando.split(maxsplit=1)) > 1 else ""
+        partes = [p.strip() for p in corpo.split(";") if p.strip()]
+        if len(partes) < 2:
+            self._telegram.enviar_mensagem(
+                "💳 *COMO REGISTRAR PAGAMENTO DE FATURA:*\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Envie: `/pagar_fatura Cartao ; Valor [; Conta Origem]`\n\n"
+                "💡 *Exemplos:*\n"
+                "• `/pagar_fatura santander ; 1469,23`\n"
+                "• `/pagar_fatura bradesco ; 449,05 ; santander conta`",
+                chat_id=chat_id,
+            )
+            return
+
+        cartao = self._parser._resolver_conta(partes[0])
+        if not cartao:
+            self._telegram.enviar_mensagem(
+                f"⚠️ Cartão '{partes[0]}' não reconhecido. Use `santander`, `bradesco` ou `inter`.",
+                chat_id=chat_id,
+            )
+            return
+
+        try:
+            valor = para_decimal(partes[1])
+        except Exception:
+            valor = None
+        if not valor or valor <= 0:
+            self._telegram.enviar_mensagem(
+                "⚠️ Valor inválido. Exemplo: `/pagar_fatura santander ; 1469,23`.",
+                chat_id=chat_id,
+            )
+            return
+
+        conta_origem = "Santander Conta"
+        if len(partes) > 2:
+            conta_resolvida = self._parser._resolver_conta(partes[2])
+            if conta_resolvida:
+                conta_origem = conta_resolvida
+
+        hoje = date.today()
+        ano_ciclo, mes_ciclo = competencia_ciclo_atual(hoje)
+        mes_comp = formatar_mes_competencia(ano_ciclo, mes_ciclo)
+
+        self._registrar_pagamento_fatura(
+            cartao=cartao,
+            valor=valor,
+            mes_competencia=mes_comp,
+            conta_origem=conta_origem,
+            chat_id=chat_id,
+            dry_run=dry_run,
+        )
+
+    def _registrar_pagamento_fatura(
+        self,
+        cartao: str,
+        valor: Decimal,
+        mes_competencia: str,
+        conta_origem: str,
+        chat_id: str,
+        dry_run: bool = False,
+    ) -> str:
+        """Cria lançamento `TipoTransacao.PAGAR_FATURA` debitando `conta_origem` e creditando `cartao`."""
+        hoje = date.today()
+        lancamento = LancamentoTransacao(
+            descricao=f"Pagamento Fatura {cartao}",
+            valor=valor,
+            data_compra=hoje,
+            mes_competencia=mes_competencia,
+            tipo=TipoTransacao.PAGAR_FATURA,
+            categoria="",
+            conta_ou_cartao=conta_origem,
+            conta_destino=cartao,
+            recorrencia=Recorrencia.NAO_RECORRENTE,
+            status=StatusTransacao.REALIZADO,
+        )
+
+        page_id = "dry-run-id"
+        if not dry_run:
+            ano_m, mes_m = parse_mes_competencia(mes_competencia)
+            self._repos.meses.garantir_mes(ano_m, mes_m)
+            page_id = self._repos.transacoes.criar_lancamento(lancamento)
+
+        msg = (
+            "💳 *Pagamento de Fatura Registrado!*\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"• *Cartão:* {cartao}\n"
+            f"• *Valor Pago:* *{formatar_brl(valor)}*\n"
+            f"• *Saída de:* {conta_origem}\n"
+            f"• *Competência:* {mes_competencia}\n"
+            "• *Status:* *Realizado* 🟢\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "O saldo da conta e o limite do cartão já foram atualizados no Notion!"
+        )
+        botoes = {
+            "inline_keyboard": [
+                [{"text": "🗑️ Desfazer / Excluir Lançamento", "callback_data": f"excluir:{page_id}"}]
+            ]
+        }
+        self._telegram.enviar_mensagem(msg, chat_id=chat_id, reply_markup=botoes)
+        return page_id
+
+    def notificar_lembrete_salario(
+        self,
+        data_referencia: date | None = None,
+        dry_run: bool = False,
+    ) -> bool:
+        """Pergunta no dia 25 às 10h se o salário já caiu na conta."""
+        hoje = data_referencia or date.today()
+        chat_id = self.config.telegram_chat_id
+        if not chat_id:
+            logger.warning("TELEGRAM_CHAT_ID não configurado. Não é possível enviar lembrete de salário.")
+            return False
+
+        ano_comp, mes_comp_num = adicionar_meses(hoje.year, hoje.month, 1) if hoje.day >= 25 else (hoje.year, hoje.month)
+        mes_comp = formatar_mes_competencia(ano_comp, mes_comp_num)
+
+        msg = (
+            "💰 *Bom dia! Hoje é dia 25 — seu salário já caiu na conta?*\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "Para registrar a entrada no Notion, responda com:\n"
+            "`/salario [valor]`\n\n"
+            "💡 *Exemplos:*\n"
+            "• `/salario 5500`\n"
+            "• `/salario 5500,50 ; santander conta`\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"ℹ️ A entrada será registrada na competência *{mes_comp}* (Santander Conta por padrão)."
+        )
+        if not dry_run:
+            self._telegram.enviar_mensagem(msg, chat_id=chat_id)
+        logger.info("Lembrete de salário enviado para o chat %s.", chat_id)
+        return True
+
+    def notificar_lembrete_cartoes(
+        self,
+        data_referencia: date | None = None,
+        dry_run: bool = False,
+    ) -> int:
+        """Pergunta no dia 25 à noite se os cartões de crédito já foram pagos, com botões inline."""
+        hoje = data_referencia or date.today()
+        chat_id = self.config.telegram_chat_id
+        if not chat_id:
+            logger.warning("TELEGRAM_CHAT_ID não configurado. Não é possível enviar lembrete de cartões.")
+            return 0
+
+        ano_ciclo, mes_ciclo = competencia_ciclo_atual(hoje)
+        mes_comp = formatar_mes_competencia(ano_ciclo, mes_ciclo)
+        resumo_mes = self._repos.meses.obter_resumo_mes(mes_comp)
+
+        faturas_ativas: list[tuple[str, Decimal]] = []
+        for nome_cartao, chave in (
+            ("Santander Credito", "fatura_santander"),
+            ("Bradesco Credito", "fatura_bradesco"),
+            ("Inter Credito", "fatura_inter"),
+        ):
+            val = resumo_mes.get(chave, Decimal("0.00"))
+            if val > 0:
+                faturas_ativas.append((nome_cartao, val))
+
+        if not faturas_ativas:
+            msg = (
+                f"💳 *Fechamento do Dia 25 ({mes_comp})*\n"
+                "Você já pagou seus cartões de crédito hoje?\n\n"
+                "💡 Caso queira registrar manualmente, use:\n"
+                "`/pagar_fatura santander ; valor`"
+            )
+            if not dry_run:
+                self._telegram.enviar_mensagem(msg, chat_id=chat_id)
+            return 0
+
+        linhas_faturas = "\n".join(
+            f"• *{cartao}:* *{formatar_brl(valor)}*" for cartao, valor in faturas_ativas
+        )
+        botoes_rows = [
+            [
+                {
+                    "text": f"✅ Paguei {cartao} ({formatar_brl(valor)})",
+                    "callback_data": f"pf:{cartao}:{decimal_para_centavos(valor)}:{mes_comp}",
+                }
+            ]
+            for cartao, valor in faturas_ativas
+        ]
+
+        msg = (
+            f"💳 *Boa noite! Dia 25 — você já pagou os cartões de crédito ({mes_comp})?*\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"{linhas_faturas}\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "👉 Clique nos botões abaixo para registrar o pagamento (saindo da `Santander Conta`) "
+            "ou use `/pagar_fatura cartao ; valor` se pagou outro valor."
+        )
+        if not dry_run:
+            self._telegram.enviar_mensagem(
+                msg,
+                chat_id=chat_id,
+                reply_markup={"inline_keyboard": botoes_rows},
+            )
+        logger.info("Lembrete de pagamento de cartões enviado (%d faturas) para o chat %s.", len(faturas_ativas), chat_id)
+        return len(faturas_ativas)

@@ -588,6 +588,58 @@ class TestTelegramBotServicePrevistos(unittest.TestCase):
         self.assertIn("2027-Janeiro*: *R$ 1.350,00* (45.0% da renda", texto)
         self.assertIn("acima de 50%", texto)
 
+    def test_notificar_lembrete_salario_dia_25(self) -> None:
+        enviado = self.service.notificar_lembrete_salario(data_referencia=date(2026, 11, 25))
+        self.assertTrue(enviado)
+        self.mock_telegram.enviar_mensagem.assert_called_once()
+        texto = self.mock_telegram.enviar_mensagem.call_args[0][0]
+        self.assertIn("salário já caiu", texto)
+        self.assertIn("/salario", texto)
+        self.assertIn("2026-Dezembro", texto)
+
+    def test_notificar_lembrete_cartoes_dia_25_com_botoes_inline(self) -> None:
+        self.mock_repos.meses.obter_resumo_mes.return_value = {
+            "fatura_santander": Decimal("1200.50"),
+            "fatura_bradesco": Decimal("350.00"),
+            "fatura_inter": Decimal("0.00"),
+        }
+        qtd = self.service.notificar_lembrete_cartoes(data_referencia=date(2026, 11, 25))
+        self.assertEqual(qtd, 2)
+        self.mock_repos.meses.obter_resumo_mes.assert_called_once_with("2026-Novembro")
+        chamada = self.mock_telegram.enviar_mensagem.call_args
+        self.assertIn("já pagou os cartões de crédito (2026-Novembro)", chamada[0][0])
+        botoes = chamada[1]["reply_markup"]["inline_keyboard"]
+        self.assertEqual(len(botoes), 2)
+        self.assertEqual(botoes[0][0]["callback_data"], "pf:Santander Credito:120050:2026-Novembro")
+        self.assertEqual(botoes[1][0]["callback_data"], "pf:Bradesco Credito:35000:2026-Novembro")
+
+    def test_comando_salario_registra_entrada_no_notion(self) -> None:
+        self.mock_repos.transacoes.criar_lancamento.return_value = "page-sal-1"
+        self.service._tratar_comando("/salario 4500,50", chat_id="123456", dry_run=False)
+        self.mock_repos.transacoes.criar_lancamento.assert_called_once()
+        lanc = self.mock_repos.transacoes.criar_lancamento.call_args[0][0]
+        self.assertEqual(lanc.descricao, "Salário")
+        self.assertEqual(lanc.valor, Decimal("4500.50"))
+        self.assertEqual(lanc.tipo, TipoTransacao.ENTRADA)
+        self.assertEqual(lanc.conta_ou_cartao, "Santander Conta")
+        self.assertTrue(lanc.eh_entrada_na_conta)
+
+    def test_callback_pagar_fatura_registra_pagamento_no_notion(self) -> None:
+        self.mock_repos.transacoes.criar_lancamento.return_value = "page-pf-1"
+        self.service._tratar_callback(
+            "cb-pf",
+            "pf:Santander Credito:120050:2026-Novembro",
+            chat_id="123456",
+            dry_run=False,
+        )
+        self.mock_repos.transacoes.criar_lancamento.assert_called_once()
+        lanc = self.mock_repos.transacoes.criar_lancamento.call_args[0][0]
+        self.assertEqual(lanc.tipo, TipoTransacao.PAGAR_FATURA)
+        self.assertEqual(lanc.valor, Decimal("1200.50"))
+        self.assertEqual(lanc.conta_ou_cartao, "Santander Conta")
+        self.assertEqual(lanc.conta_destino, "Santander Credito")
+        self.assertEqual(lanc.mes_competencia, "2026-Novembro")
+
 
 if __name__ == "__main__":
     unittest.main()

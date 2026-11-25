@@ -64,6 +64,18 @@ jobs:
             python telegram_bot.py --checar-previstos
           fi
 
+      - name: Lembretes do Dia 25 (Salário 10h e Cartões 20h BRT)
+        if: always()
+        run: |
+          DIA_BRT=$(TZ=America/Sao_Paulo date +%d)
+          HORA_BRT=$(TZ=America/Sao_Paulo date +%H)
+          if [ "$DIA_BRT" = "25" ] && [ "$HORA_BRT" = "10" ]; then
+            python telegram_bot.py --lembrete-salario
+          fi
+          if [ "$DIA_BRT" = "25" ] && [ "$HORA_BRT" = "20" ]; then
+            python telegram_bot.py --lembrete-cartoes
+          fi
+
       - name: Notificar Falha no Telegram
         if: failure()
         run: |

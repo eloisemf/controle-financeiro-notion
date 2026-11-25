@@ -403,6 +403,16 @@ def construir_parser_telegram(
         help="Verifica se há gastos fixos previstos para a data de hoje e envia lembrete no Telegram.",
     )
     parser.add_argument(
+        "--lembrete-salario",
+        action="store_true",
+        help="Envia lembrete perguntando se o salário do dia 25 já caiu na conta.",
+    )
+    parser.add_argument(
+        "--lembrete-cartoes",
+        action="store_true",
+        help="Envia lembrete perguntando se as faturas de cartão de crédito já foram pagas.",
+    )
+    parser.add_argument(
         "-n",
         "--dry-run",
         action="store_true",
@@ -430,9 +440,23 @@ def executar_telegram(args: argparse.Namespace) -> None:
                 notificados = bot_service.verificar_e_notificar_gastos_previstos(dry_run=args.dry_run)
                 print(f"✅ Verificação de previstos: {notificados} lembrete(s) enviado(s).")
 
-            if getattr(args, "sync", False) or (
-                not getattr(args, "semanal", False) and not getattr(args, "checar_previstos", False)
-            ):
+            if getattr(args, "lembrete_salario", False):
+                logger.info("Enviando lembrete de salário (dia 25)...")
+                enviado = bot_service.notificar_lembrete_salario(dry_run=args.dry_run)
+                print(f"✅ Lembrete de salário: {'enviado' if enviado else 'ignorado'}.")
+
+            if getattr(args, "lembrete_cartoes", False):
+                logger.info("Enviando lembrete de pagamento de cartões (dia 25)...")
+                qtd_cartoes = bot_service.notificar_lembrete_cartoes(dry_run=args.dry_run)
+                print(f"✅ Lembrete de cartões enviado ({qtd_cartoes} fatura(s) listada(s)).")
+
+            nenhuma_rotina_extra = (
+                not getattr(args, "semanal", False)
+                and not getattr(args, "checar_previstos", False)
+                and not getattr(args, "lembrete_salario", False)
+                and not getattr(args, "lembrete_cartoes", False)
+            )
+            if getattr(args, "sync", False) or nenhuma_rotina_extra:
                 logger.info("Verificando mensagens pendentes no Telegram...")
                 qtd = bot_service.processar_mensagens_pendentes(dry_run=args.dry_run)
                 print(f"✅ Processamento concluído: {qtd} mensagem(ns) tratada(s).")
