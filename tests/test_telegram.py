@@ -597,6 +597,23 @@ class TestTelegramBotServicePrevistos(unittest.TestCase):
         self.assertIn("/salario", texto)
         self.assertIn("2026-Dezembro", texto)
 
+    def test_notificar_lembrete_salario_com_valor_padrao_e_callback(self) -> None:
+        self.service.config.salario_padrao = Decimal("3500.00")
+        enviado = self.service.notificar_lembrete_salario(data_referencia=date(2026, 11, 25))
+        self.assertTrue(enviado)
+        chamada = self.mock_telegram.enviar_mensagem.call_args
+        self.assertIn("R$ 3.500,00", chamada[0][0])
+        self.assertIn("/salario 3500,00", chamada[0][0])
+        botao = chamada[1]["reply_markup"]["inline_keyboard"][0][0]
+        self.assertEqual(botao["callback_data"], "sal:350000:2026-Dezembro")
+
+        self.mock_repos.transacoes.criar_lancamento.return_value = "page-sal-cb"
+        self.service._tratar_callback("cb-sal", "sal:350000:2026-Dezembro", chat_id="123456", dry_run=False)
+        lanc = self.mock_repos.transacoes.criar_lancamento.call_args[0][0]
+        self.assertEqual(lanc.tipo, TipoTransacao.ENTRADA)
+        self.assertEqual(lanc.valor, Decimal("3500.00"))
+        self.assertEqual(lanc.mes_competencia, "2026-Dezembro")
+
     def test_notificar_lembrete_cartoes_dia_25_com_botoes_inline(self) -> None:
         self.mock_repos.meses.obter_resumo_mes.return_value = {
             "fatura_santander": Decimal("1200.50"),

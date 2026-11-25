@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from decimal import Decimal
 from pathlib import Path
 
-from financas.domain.models import DEFAULT_CARTOES, CartaoConfig, RegraFechamento
+from financas.domain.models import DEFAULT_CARTOES, CartaoConfig, RegraFechamento, para_decimal
 
 NOTION_API_VERSION = "2022-06-28"
 NOTION_BASE_URL = "https://api.notion.com/v1"
@@ -112,6 +113,7 @@ class AppConfig:
     telegram_bot_token: str | None = field(default=None, repr=False)
     telegram_chat_id: str | None = field(default=None, repr=False)
     nome_titular: str = ""
+    salario_padrao: Decimal | None = None
     databases: NotionDatabaseIds = field(default_factory=NotionDatabaseIds)
     pages: NotionPageIds = field(default_factory=NotionPageIds)
     cartoes: dict[str, CartaoConfig] = field(default_factory=lambda: dict(DEFAULT_CARTOES))
@@ -127,12 +129,15 @@ class AppConfig:
         telegram_token = os.getenv("TELEGRAM_BOT_TOKEN")
         telegram_chat = os.getenv("TELEGRAM_CHAT_ID")
         nome_titular = os.getenv("NOME_TITULAR", "").strip()
+        salario_raw = os.getenv("SALARIO_PADRAO", "").strip()
+        salario_padrao = para_decimal(salario_raw) if salario_raw else None
         return cls(
             notion_token=token.strip(),
             gemini_api_key=gemini_key.strip() if gemini_key else None,
             telegram_bot_token=telegram_token.strip() if telegram_token else None,
             telegram_chat_id=telegram_chat.strip() if telegram_chat else None,
             nome_titular=nome_titular,
+            salario_padrao=salario_padrao,
             databases=NotionDatabaseIds.from_env(),
             pages=NotionPageIds.from_env(),
         )

@@ -347,6 +347,23 @@ class TelegramBotService:
                 "🗑️ *Lançamento Excluído!*\nA despesa foi movida para a lixeira do Notion com sucesso.",
                 chat_id=chat_id,
             )
+        elif data.startswith("sal:"):
+            partes_sal = data.split(":")
+            if len(partes_sal) == 3:
+                _, centavos_str, mes_comp = partes_sal
+                valor_sal = (Decimal(centavos_str) / Decimal("100")).quantize(Decimal("0.01"))
+                self._registrar_salario(
+                    valor=valor_sal,
+                    conta="Santander Conta",
+                    mes_competencia=mes_comp,
+                    chat_id=chat_id,
+                    dry_run=dry_run,
+                )
+                self._telegram.responder_callback_query(
+                    cb_id, texto=f"Salário {formatar_brl(valor_sal)} registrado!"
+                )
+            else:
+                self._telegram.responder_callback_query(cb_id)
         elif data.startswith("pf:"):
             partes_pf = data.split(":")
             if len(partes_pf) == 4:
@@ -795,13 +812,30 @@ class TelegramBotService:
                 conta = conta_resolvida
 
         hoje = date.today()
-        # No dia 25 em diante, o salário recebido compõe a receita do novo ciclo (mês seguinte)
         if hoje.day >= 25:
             ano_comp, mes_comp_num = adicionar_meses(hoje.year, hoje.month, 1)
         else:
             ano_comp, mes_comp_num = hoje.year, hoje.month
         mes_competencia = formatar_mes_competencia(ano_comp, mes_comp_num)
 
+        self._registrar_salario(
+            valor=valor,
+            conta=conta,
+            mes_competencia=mes_competencia,
+            chat_id=chat_id,
+            dry_run=dry_run,
+        )
+
+    def _registrar_salario(
+        self,
+        valor: Decimal,
+        conta: str,
+        mes_competencia: str,
+        chat_id: str,
+        dry_run: bool = False,
+    ) -> str:
+        """Cria lançamento `TipoTransacao.ENTRADA` (Salário) no Notion e envia confirmação."""
+        hoje = date.today()
         lancamento = LancamentoTransacao(
             descricao="Salário",
             valor=valor,
@@ -817,6 +851,7 @@ class TelegramBotService:
 
         page_id = "dry-run-id"
         if not dry_run:
+            ano_comp, mes_comp_num = parse_mes_competencia(mes_competencia)
             self._repos.meses.garantir_mes(ano_comp, mes_comp_num)
             page_id = self._repos.transacoes.criar_lancamento(lancamento)
 
@@ -835,6 +870,7 @@ class TelegramBotService:
             ]
         }
         self._telegram.enviar_mensagem(msg, chat_id=chat_id, reply_markup=botoes)
+        return page_id
 
     def _tratar_pagar_fatura(self, comando: str, chat_id: str, dry_run: bool = False) -> None:
         """Processa `/pagar_fatura Cartao ; Valor [; Conta Origem]`."""
@@ -954,19 +990,45 @@ class TelegramBotService:
         ano_comp, mes_comp_num = adicionar_meses(hoje.year, hoje.month, 1) if hoje.day >= 25 else (hoje.year, hoje.month)
         mes_comp = formatar_mes_competencia(ano_comp, mes_comp_num)
 
-        msg = (
-            "💰 *Bom dia! Hoje é dia 25 — seu salário já caiu na conta?*\n"
-            "━━━━━━━━━━━━━━━━━━━━━━\n"
-            "Para registrar a entrada no Notion, responda com:\n"
-            "`/salario [valor]`\n\n"
-            "💡 *Exemplos:*\n"
-            "• `/salario 5500`\n"
-            "• `/salario 5500,50 ; santander conta`\n"
-            "━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"ℹ️ A entrada será registrada na competência *{mes_comp}* (Santander Conta por padrão)."
-        )
-        if not dry_run:
-            self._telegram.enviar_mensagem(msg, chat_id=chat_id)
+        sal_padrao = getattr(self.config, "salario_padrao", None)
+        if isinstance(sal_padrao, Decimal) and sal_padrao > 0:
+            val_fmt = formatar_brl(sal_padrao)
+            val_cmd = f"{sal_padrao:.2f}".replace(".", ",")
+            msg = (
+                "💰 *Bom dia! Hoje é dia 25 — seu salário já caiu na conta?*\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"• *Valor habitual:* *{val_fmt}*\n\n"
+                "👉 Clique no botão abaixo para confirmar o valor habitual, ou responda com:\n"
+                f"`/salario {val_cmd}` *(altere o valor se caiu diferente este mês)*\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"ℹ️ A entrada será registrada na competência *{mes_comp}* (Santander Conta por padrão)."
+            )
+            botoes = {
+                "inline_keyboard": [
+                    [
+                        {
+                            "text": f"✅ Sim, caiu {val_fmt}",
+                            "callback_data": f"sal:{decimal_para_centavos(sal_padrao)}:{mes_comp}",
+                        }
+                    ]
+                ]
+            }
+            if not dry_run:
+                self._telegram.enviar_mensagem(msg, chat_id=chat_id, reply_markup=botoes)
+        else:
+            msg = (
+                "💰 *Bom dia! Hoje é dia 25 — seu salário já caiu na conta?*\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Para registrar a entrada no Notion, responda com:\n"
+                "`/salario [valor]`\n\n"
+                "💡 *Exemplos:*\n"
+                "• `/salario 5000`\n"
+                "• `/salario 5000,50 ; santander conta`\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"ℹ️ A entrada será registrada na competência *{mes_comp}* (Santander Conta por padrão)."
+            )
+            if not dry_run:
+                self._telegram.enviar_mensagem(msg, chat_id=chat_id)
         logger.info("Lembrete de salário enviado para o chat %s.", chat_id)
         return True
 
